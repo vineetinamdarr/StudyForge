@@ -1,105 +1,177 @@
-
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>VineetOS - CSE & Study Command Center</title>
-
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>StudyForge — Focus & Study Workspace</title>
+  
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
-
-  <!-- ES Module Import Map for React & Lucide Icons -->
-  <script type="importmap">
-  {
-    "imports": {
-      "react": "https://esm.sh/react@18.3.1",
-      "react/": "https://esm.sh/react@18.3.1/",
-      "react-dom": "https://esm.sh/react-dom@18.3.1",
-      "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
-      "lucide-react": "https://esm.sh/lucide-react@0.344.0?deps=react@18.3.1"
-    }
-  }
-  </script>
-
-  <!-- In-browser Babel Compiler for JSX -->
+  
+  <!-- React & ReactDOM (Development UMD for browser Babel compilation) -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  
+  <!-- Babel Standalone for JSX compilation -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  
+  <!-- Google Fonts: Inter -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+    }
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: rgba(15, 23, 42, 0.6);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(51, 65, 85, 0.8);
+      border-radius: 9999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(99, 102, 241, 0.8);
+    }
+  </style>
 </head>
-<body class="bg-[#0b0f19] text-slate-100 min-h-screen">
+<body class="bg-[#0b0f19] text-slate-100 overflow-x-hidden selection:bg-indigo-500 selection:text-white">
+
+  <!-- Root mount for React -->
   <div id="root"></div>
 
-  <!-- React Application Script -->
-  <script type="text/babel" data-type="module">
-    import React, { useState, useEffect, useRef, useMemo } from 'react';
-    import { createRoot } from 'react-dom/client';
-    import {
-      Terminal, Code2, Brain, Sparkles, Clock, Play, Pause, RotateCcw,
-      Volume2, VolumeX, Plus, Trash2, CheckCircle2, ArrowRight, ArrowLeft,
-      Flame, Trophy, BookOpen, Layers, FileText, Copy, Check, Download,
-      RefreshCw, LayoutGrid, Maximize2, ChevronRight, ChevronLeft, Zap,
-      Award, Calendar, Filter, Sliders, Music, Hash, Cpu, Globe,
-      Bot, Wand2, Loader2, Send, MessageSquare, Timer, Watch, Quote,
-      Image as ImageIcon, BarChart3, Sun, Moon, Save
-    } from 'lucide-react';
+  <!-- Main Application Script -->
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useMemo } = React;
 
-    // ==========================================
-    // GEMINI API HELPER (Exponential Backoff)
-    // ==========================================
-    // Insert your Gemini API Key here (or leave empty if testing without AI)
-    const apiKey = "";
-    const GEMINI_MODEL = "gemini-2.5-flash";
+    // Use local calendar dates for day keys; toISOString() uses UTC and can shift dates.
+    const localDateKey = (date) => {
+      const y = date.getFullYear();
+      const m = String(date.getMonth() + 1).padStart(2, '0');
+      const d = String(date.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    };
 
-    async function callGeminiAPI({ prompt, systemInstruction, responseSchema = null }) {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
-      const payload = {
-        contents: [{ parts: [{ text: prompt }] }],
-      };
+    const getWeekStartKey = (date) => {
+      const monday = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+      monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+      return localDateKey(monday);
+    };
 
-      if (systemInstruction) {
-        payload.systemInstruction = { parts: [{ text: systemInstruction }] };
+    const safeSaveState = (key, value) => {
+      try {
+        localStorage.setItem(`dev_cmd_${key}`, JSON.stringify(value));
+        return true;
+      } catch (error) {
+        console.warn(`Could not save ${key} to local storage.`, error);
+        return false;
       }
+    };
 
-      if (responseSchema) {
-        payload.generationConfig = {
-          responseMimeType: "application/json",
-          responseSchema
-        };
+    const getHabitStreak = (days, todayIndex) => {
+      if (!Array.isArray(days) || days.length !== 7) return 0;
+      // If today is not checked yet, continue counting from yesterday.
+      let index = days[todayIndex] ? todayIndex : (todayIndex + 6) % 7;
+      let streak = 0;
+      for (let i = 0; i < 7; i += 1) {
+        if (!days[index]) break;
+        streak += 1;
+        index = (index + 6) % 7;
       }
+      return streak;
+    };
 
-      const delays = [1000, 2000, 4000, 8000, 16000];
-      for (let attempt = 0; attempt <= delays.length; attempt++) {
-        try {
-          const response = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-          });
-
-          if (!response.ok) {
-            throw new Error(`HTTP status ${response.status}`);
-          }
-
-          const result = await response.json();
-          const text = result?.candidates?.[0]?.content?.parts?.[0]?.text;
-          if (!text) throw new Error("Empty response from Gemini");
-          return responseSchema ? JSON.parse(text) : text;
-        } catch (err) {
-          if (attempt === delays.length) {
-            throw err;
-          }
-          await new Promise((res) => setTimeout(res, delays[attempt]));
+    // Helper to safely mount Lucide icons in UMD/browser environment
+    const createLucideIcon = (iconName) => {
+      return function LucideReactIcon({ className = 'w-4 h-4', ...props }) {
+        const raw =
+          window.lucide &&
+          (window.lucide[iconName] || (window.lucide.icons && window.lucide.icons[iconName]));
+        if (!raw) {
+          return <span className={`inline-block ${className}`} {...props} />;
         }
-      }
-    }
+        const children =
+          raw[0] === 'svg' && Array.isArray(raw[2])
+            ? raw[2]
+            : Array.isArray(raw)
+            ? raw
+            : [];
+        return (
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={className}
+            {...props}
+          >
+            {children.map((child, idx) => {
+              if (!Array.isArray(child)) return null;
+              const [Tag, attrs] = child;
+              return React.createElement(Tag, { key: idx, ...attrs });
+            })}
+          </svg>
+        );
+      };
+    };
+
+    const Terminal = createLucideIcon('Terminal');
+    const Code2 = createLucideIcon('Code2');
+    const Sparkles = createLucideIcon('Sparkles');
+    const Clock = createLucideIcon('Clock');
+    const Play = createLucideIcon('Play');
+    const Pause = createLucideIcon('Pause');
+    const RotateCcw = createLucideIcon('RotateCcw');
+    const Volume2 = createLucideIcon('Volume2');
+    const VolumeX = createLucideIcon('VolumeX');
+    const Plus = createLucideIcon('Plus');
+    const Trash2 = createLucideIcon('Trash2');
+    const ArrowRight = createLucideIcon('ArrowRight');
+    const ArrowLeft = createLucideIcon('ArrowLeft');
+    const Flame = createLucideIcon('Flame');
+    const Trophy = createLucideIcon('Trophy');
+    const Layers = createLucideIcon('Layers');
+    const Copy = createLucideIcon('Copy');
+    const Check = createLucideIcon('Check');
+    const Download = createLucideIcon('Download');
+    const RefreshCw = createLucideIcon('RefreshCw');
+    const LayoutGrid = createLucideIcon('LayoutGrid');
+    const Calendar = createLucideIcon('Calendar');
+    const Music = createLucideIcon('Music');
+    const Cpu = createLucideIcon('Cpu');
+    const Timer = createLucideIcon('Timer');
+    const Watch = createLucideIcon('Watch');
+    const Quote = createLucideIcon('Quote');
+    const ImageIcon = createLucideIcon('Image');
+    const BarChart3 = createLucideIcon('BarChart3');
+    const Save = createLucideIcon('Save');
+    const X = createLucideIcon('X');
+    const Settings = createLucideIcon('Settings');
 
     // ==========================================
-    // INITIAL DEMO DATA
+    // INITIAL UNIVERSAL DEMO DATA
     // ==========================================
+    const INITIAL_CATEGORIES = [
+      { id: 'cat-1', name: 'DSA & C/Python', color: 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30' },
+      { id: 'cat-2', name: 'Web Dev / Frontend', color: 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30' },
+      { id: 'cat-3', name: 'College Core / CSE', color: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' }
+    ];
+
     const INITIAL_TASKS = [
       {
         id: 't-1',
-        title: 'Practice arrays & pointers memory allocation in C',
+        title: 'Practice dynamic memory allocation & pointers in C',
         category: 'DSA & C/Python',
         priority: 'High',
         status: 'in_progress',
@@ -107,7 +179,7 @@
       },
       {
         id: 't-2',
-        title: 'Solve 2 Python logic & string manipulation problems',
+        title: 'Solve 2 algorithm logic problems on LeetCode',
         category: 'DSA & C/Python',
         priority: 'High',
         status: 'todo',
@@ -115,30 +187,22 @@
       },
       {
         id: 't-3',
-        title: 'Review Hiragana chart & 10 JLPT N5 vocabulary words',
-        category: 'Japanese (JLPT N5)',
+        title: 'Build and style a responsive landing page component',
+        category: 'Web Dev / Frontend',
         priority: 'Medium',
-        status: 'in_progress',
+        status: 'todo',
         xp: 35
       },
       {
         id: 't-4',
-        title: 'Explore Gemini API vision prompts & structured JSON outputs',
-        category: 'AI / ML',
-        priority: 'Medium',
-        status: 'todo',
-        xp: 45
-      },
-      {
-        id: 't-5',
-        title: 'Revise engineering math differential equations derivations',
-        category: 'College / CSE',
+        title: 'Revise operating systems process scheduling algorithms',
+        category: 'College Core / CSE',
         priority: 'Low',
         status: 'todo',
         xp: 30
       },
       {
-        id: 't-6',
+        id: 't-5',
         title: 'Implement Binary Search iterative & recursive in C++',
         category: 'DSA & C/Python',
         priority: 'Medium',
@@ -147,48 +211,37 @@
       }
     ];
 
-    const INITIAL_FLASHCARDS = [
-      { id: 'f-1', jp: 'わたし (私)', romaji: 'Watashi', en: 'I / Me', type: 'Vocab (N5)', mastered: true },
-      { id: 'f-2', jp: 'べんきょう (勉強)', romaji: 'Benkyou', en: 'Study / Diligence', type: 'Vocab (N5)', mastered: false },
-      { id: 'f-3', jp: 'がくせい (学生)', romaji: 'Gakusei', en: 'Student', type: 'Vocab (N5)', mastered: true },
-      { id: 'f-4', jp: 'にほんご (日本語)', romaji: 'Nihongo', en: 'Japanese Language', type: 'Vocab (N5)', mastered: false },
-      { id: 'f-5', jp: 'だいがく (大学)', romaji: 'Daigaku', en: 'University / College', type: 'Vocab (N5)', mastered: false },
-      { id: 'f-6', jp: 'あ / ア', romaji: 'a', en: 'Vowel "Ah" (Hiragana / Katakana)', type: 'Kana', mastered: true },
-      { id: 'f-7', jp: 'き / キ', romaji: 'ki', en: 'Syllable "Ki" (Key)', type: 'Kana', mastered: false },
-      { id: 'f-8', jp: 'でんしゃ (電車)', romaji: 'Densha', en: 'Electric Train', type: 'Vocab (N5)', mastered: false },
-      { id: 'f-9', jp: 'ともだち (友達)', romaji: 'Tomodachi', en: 'Friend', type: 'Vocab (N5)', mastered: false },
-      { id: 'f-10', jp: 'まいります (参ります)', romaji: 'Mairimasu', en: 'To go / To come (Humble)', type: 'Grammar (N5)', mastered: false }
-    ];
-
     const INITIAL_HABITS = [
       {
         id: 'h-1',
-        name: 'Code in Python / C (30m+)',
+        name: 'Code / Solve Problems (30m+)',
         category: 'DSA & C/Python',
-        days: [true, true, true, false, true, true, false],
-        streak: 4
+        days: [false, false, false, false, false, false, false],
+        earnedDays: [],
+        streak: 0
       },
       {
         id: 'h-2',
-        name: '10 JLPT N5 Words / Kana Review',
-        category: 'Japanese (JLPT N5)',
-        days: [true, false, true, true, true, true, false],
-        streak: 5
+        name: 'Read Technical Docs / Book',
+        category: 'Web Dev / Frontend',
+        days: [false, false, false, false, false, false, false],
+        earnedDays: [],
+        streak: 0
       },
       {
         id: 'h-3',
-        name: '1 DSA Concept or LeetCode Problem',
-        category: 'DSA & C/Python',
-        days: [false, true, true, true, false, true, false],
-        streak: 2
-      },
-      {
-        id: 'h-4',
-        name: 'College CSE Lecture Notes Review',
-        category: 'College / CSE',
-        days: [true, true, false, true, true, false, false],
-        streak: 3
+        name: 'Review College / Core Lectures',
+        category: 'College Core / CSE',
+        days: [false, false, false, false, false, false, false],
+        earnedDays: [],
+        streak: 0
       }
+    ];
+
+    const INITIAL_NOTE_TABS = [
+      { id: 'snippets', label: 'Python / C Code' },
+      { id: 'algorithms', label: 'Algorithm Notes' },
+      { id: 'ideas', label: 'Project Ideas' }
     ];
 
     const INITIAL_NOTES = {
@@ -210,56 +263,39 @@ int main() {
 from collections import Counter
 nums = [1, 2, 2, 3, 3, 3, 4]
 freq = Counter(nums)
-print(freq.most_common(1)) # [(3, 3)]`,
+print(freq.most_common(1))`,
 
-      japanese: `# JLPT N5 Grammar & Particle Notes
+      algorithms: `# Algorithm Notes & Big-O Reference
 
-1. は (wa) - Topic Marker
-   わたし は がくせい です。
-   (Watashi wa gakusei desu - I am a student.)
+- Two Pointers Technique:
+  * Used for sorted arrays or strings to find pairs in O(n) time with O(1) space.
+- Sliding Window:
+  * Used for subarray or substring problems (e.g., max sum of size k).`,
 
-2. を (wo/o) - Direct Object Marker
-   にほんご を べんきょう します。
-   (Nihongo o benkyou shimasu - I study Japanese.)
+      ideas: `# Personal Projects & Ideas
 
-3. に (ni) / へ (e) - Direction / Time
-   だいがく へ いきます。
-   (Daigaku e ikimasu - I go to university.)`,
-
-      ideas: `# Hackathon & AI Project Ideas
-
-- Smart Recycling Digital Twin:
-  * Combine camera classification with real-time bin capacity telemetry
-  * Add gamified reward tokens for campus sustainability
-- Next Steps:
-  * Benchmark sorting algorithms visualizer
-  * Build personal portfolio site after mastering core DSA patterns`
+- Task Tracker Web App:
+  * Clean single-page application with dark mode, timers, and local storage.
+- Real-time Portfolio:
+  * Modern developer portfolio featuring interactive widgets and live GitHub projects.`
     };
-
-    const COMPLEXITY_DATA = [
-      { name: 'Array (Dynamic)', access: 'O(1)', search: 'O(n)', insert: 'O(n)', space: 'O(n)', note: 'Contiguous memory; fast random access via index.' },
-      { name: 'Singly Linked List', access: 'O(n)', search: 'O(n)', insert: 'O(1)*', space: 'O(n)', note: 'O(1) insert/delete at head; pointer overhead.' },
-      { name: 'Stack / Queue', access: 'O(n)', search: 'O(n)', insert: 'O(1)', space: 'O(n)', note: 'LIFO (Stack) / FIFO (Queue) operations.' },
-      { name: 'Hash Table / Dict', access: 'N/A', search: 'O(1)*', insert: 'O(1)*', space: 'O(n)', note: 'Amortized O(1) avg; O(n) worst case on collisions.' },
-      { name: 'Binary Search', access: 'N/A', search: 'O(log n)', insert: 'N/A', space: 'O(1)', note: 'Requires sorted array; halves search space each step.' },
-      { name: 'Merge Sort', access: 'N/A', search: 'N/A', insert: 'O(n log n)', space: 'O(n)', note: 'Stable divide & conquer sort; guaranteed O(n log n).' },
-      { name: 'Quick Sort', access: 'N/A', search: 'N/A', insert: 'O(n log n)*', space: 'O(log n)', note: 'In-place pivot partitioning; fast in practice.' }
-    ];
 
     const TIMER_MODES = [
-      { id: 'coding', label: 'Deep Coding', minutes: 25, color: 'from-indigo-500 to-cyan-400', badge: '25m' },
-      { id: 'dsa', label: 'DSA Sprint', minutes: 45, color: 'from-emerald-500 to-teal-400', badge: '45m' },
-      { id: 'jlpt', label: 'JLPT Study', minutes: 20, color: 'from-fuchsia-500 to-rose-400', badge: '20m' },
-      { id: 'short', label: 'Short Break', minutes: 5, color: 'from-amber-400 to-orange-500', badge: '5m' },
-      { id: 'long', label: 'Long Break', minutes: 15, color: 'from-sky-400 to-blue-500', badge: '15m' }
+      { id: 'coding', label: 'Deep Coding', minutes: 25, badge: '25m' },
+      { id: 'dsa', label: 'Algorithm Sprint', minutes: 45, badge: '45m' },
+      { id: 'review', label: 'Review Session', minutes: 20, badge: '20m' },
+      { id: 'short', label: 'Short Break', minutes: 5, badge: '5m' },
+      { id: 'long', label: 'Long Break', minutes: 15, badge: '15m' }
     ];
 
-    const CATEGORY_STYLES = {
-      'DSA & C/Python': 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30',
-      'AI / ML': 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30',
-      'Japanese (JLPT N5)': 'bg-rose-500/15 text-rose-300 border-rose-500/30',
-      'College / CSE': 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
-    };
+    const COLOR_PALETTES = [
+      { label: 'Cyan / Blue', value: 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30' },
+      { label: 'Indigo / Purple', value: 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30' },
+      { label: 'Emerald / Green', value: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' },
+      { label: 'Rose / Pink', value: 'bg-rose-500/15 text-rose-300 border-rose-500/30' },
+      { label: 'Amber / Orange', value: 'bg-amber-500/15 text-amber-300 border-amber-500/30' },
+      { label: 'Fuchsia / Violet', value: 'bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-500/30' }
+    ];
 
     const PRIORITY_STYLES = {
       High: 'bg-red-500/20 text-red-300 border-red-500/30',
@@ -270,190 +306,50 @@ print(freq.most_common(1)) # [(3, 3)]`,
     const DAYS_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
     const DAILY_WALLPAPERS = [
-      {
-        id: 'wp-1',
-        name: 'Mount Fuji Twilight',
-        url: 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?auto=format&fit=crop&w=1800&q=80',
-        accent: 'from-indigo-950/85 via-slate-950/75 to-slate-950/90'
-      },
-      {
-        id: 'wp-2',
-        name: 'Cyberpunk Tokyo Neon',
-        url: 'https://images.unsplash.com/photo-1503899036084-c55cdd92da26?auto=format&fit=crop&w=1800&q=80',
-        accent: 'from-slate-950/85 via-indigo-950/70 to-slate-950/90'
-      },
-      {
-        id: 'wp-3',
-        name: 'Kyoto Bamboo Sanctuary',
-        url: 'https://images.unsplash.com/photo-1545569341-9eb8b30979d9?auto=format&fit=crop&w=1800&q=80',
-        accent: 'from-emerald-950/85 via-slate-950/75 to-slate-950/90'
-      },
-      {
-        id: 'wp-4',
-        name: 'Deep Space Nebula',
-        url: 'https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=1800&q=80',
-        accent: 'from-slate-950/85 via-cyan-950/75 to-slate-950/90'
-      },
-      {
-        id: 'wp-5',
-        name: 'Minimalist Midnight Peaks',
-        url: 'https://images.unsplash.com/photo-1519681393784-d120267933ba?auto=format&fit=crop&w=1800&q=80',
-        accent: 'from-slate-950/80 via-slate-900/75 to-slate-950/90'
-      },
-      {
-        id: 'wp-6',
-        name: 'Sakura Shrine Evening',
-        url: 'https://images.unsplash.com/photo-1528164344705-475426879c0d?auto=format&fit=crop&w=1800&q=80',
-        accent: 'from-rose-950/80 via-slate-950/75 to-slate-950/90'
-      },
-      {
-        id: 'wp-7',
-        name: 'Aurora Borealis Horizon',
-        url: 'https://images.unsplash.com/photo-1531366936337-7c912a4589a7?auto=format&fit=crop&w=1800&q=80',
-        accent: 'from-teal-950/80 via-slate-950/75 to-slate-950/90'
-      }
+      { id: 'wp-1', name: 'Mount Fuji Twilight', url: 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?auto=format&fit=crop&w=1800&q=80', accent: 'from-indigo-950/85 via-slate-950/75 to-slate-950/90' },
+      { id: 'wp-2', name: 'Cyberpunk Tokyo Neon', url: 'https://images.unsplash.com/photo-1503899036084-c55cdd92da26?auto=format&fit=crop&w=1800&q=80', accent: 'from-slate-950/85 via-indigo-950/70 to-slate-950/90' },
+      { id: 'wp-3', name: 'Kyoto Bamboo Sanctuary', url: 'https://images.unsplash.com/photo-1545569341-9eb8b30979d9?auto=format&fit=crop&w=1800&q=80', accent: 'from-emerald-950/85 via-slate-950/75 to-slate-950/90' },
+      { id: 'wp-4', name: 'Deep Space Nebula', url: 'https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=1800&q=80', accent: 'from-slate-950/85 via-cyan-950/75 to-slate-950/90' },
+      { id: 'wp-5', name: 'Minimalist Midnight Peaks', url: 'https://images.unsplash.com/photo-1519681393784-d120267933ba?auto=format&fit=crop&w=1800&q=80', accent: 'from-slate-950/80 via-slate-900/75 to-slate-950/90' },
+      { id: 'wp-6', name: 'Sakura Shrine Evening', url: 'https://images.unsplash.com/photo-1528164344705-475426879c0d?auto=format&fit=crop&w=1800&q=80', accent: 'from-rose-950/80 via-slate-950/75 to-slate-950/90' },
+      { id: 'wp-7', name: 'Aurora Borealis Horizon', url: 'https://images.unsplash.com/photo-1531366936337-7c912a4589a7?auto=format&fit=crop&w=1800&q=80', accent: 'from-teal-950/80 via-slate-950/75 to-slate-950/90' }
     ];
 
     const DAILY_QUOTES = [
-      {
-        quote: "First, solve the problem. Then, write the code.",
-        author: "John Johnson",
-        jpSub: "継続は力なり (Keizoku wa chikara nari) — Consistency is power."
-      },
-      {
-        quote: "Fall seven times, stand up eight.",
-        author: "Japanese Proverb (七転び八起き)",
-        jpSub: "Nanakorobi yaoki — Resilience defines mastery."
-      },
-      {
-        quote: "Talk is cheap. Show me the code.",
-        author: "Linus Torvalds",
-        jpSub: "一歩一歩 (Ippo ippo) — Step by step."
-      },
-      {
-        quote: "Simplicity is the soul of efficiency.",
-        author: "Austin Freeman",
-        jpSub: "初心忘るべからず — Never forget your beginner's spirit."
-      },
-      {
-        quote: "An investment in knowledge pays the best interest.",
-        author: "Benjamin Franklin",
-        jpSub: "学問に王道なし — There is no royal road to learning."
-      },
-      {
-        quote: "The only way to learn a new programming language is by writing programs in it.",
-        author: "Dennis Ritchie (Creator of C)",
-        jpSub: "習うより慣れろ — Learn by doing rather than just being taught."
-      },
-      {
-        quote: "Small daily improvements over time lead to stunning results.",
-        author: "Robin Sharma",
-        jpSub: "千里の道も一歩から — A journey of a thousand miles begins with a single step."
-      }
-    ];
-
-    const DAILY_KANJI_LIST = [
-      {
-        kanji: '学',
-        onyomi: 'ガク (Gaku)',
-        kunyomi: 'まな-ぶ (Mana-bu)',
-        meaning: 'Study, Learning, Science',
-        example: '学生 (Gakusei) — Student • 大学 (Daigaku) — University',
-        strokes: 8,
-        level: 'JLPT N5'
-      },
-      {
-        kanji: '時',
-        onyomi: 'ジ (Ji)',
-        kunyomi: 'とき (Toki)',
-        meaning: 'Time, Hour, Moment',
-        example: '時間 (Jikan) — Time / Hours • 一時 (Ichiji) — 1 O’clock',
-        strokes: 10,
-        level: 'JLPT N5'
-      },
-      {
-        kanji: '道',
-        onyomi: 'ドウ (Dou)',
-        kunyomi: 'みち (Michi)',
-        meaning: 'Way, Road, Path, Philosophy',
-        example: '柔道 (Juudou) — Judo • 道 (Michi) — Street / Path',
-        strokes: 12,
-        level: 'JLPT N5'
-      },
-      {
-        kanji: '電',
-        onyomi: 'デン (Den)',
-        kunyomi: 'いなずま (Inazuma)',
-        meaning: 'Electricity, Powered',
-        example: '電車 (Densha) — Electric Train • 電気 (Denki) — Electricity',
-        strokes: 13,
-        level: 'JLPT N5'
-      },
-      {
-        kanji: '語',
-        onyomi: 'ゴ (Go)',
-        kunyomi: 'かた-る (Kata-ru)',
-        meaning: 'Word, Speech, Language',
-        example: '日本語 (Nihongo) — Japanese • 英語 (Eigo) — English',
-        strokes: 14,
-        level: 'JLPT N5'
-      },
-      {
-        kanji: '書',
-        onyomi: 'ショ (Sho)',
-        kunyomi: 'か-く (Ka-ku)',
-        meaning: 'Write, Book, Document',
-        example: '辞書 (Jisho) — Dictionary • 書きます (Kakimasu) — To write',
-        strokes: 10,
-        level: 'JLPT N5'
-      },
-      {
-        kanji: '力',
-        onyomi: 'リョク / リキ (Ryoku)',
-        kunyomi: 'ちから (Chikara)',
-        meaning: 'Power, Strength, Ability',
-        example: '努力 (Doryoku) — Great effort • 能力 (Nouryoku) — Ability',
-        strokes: 2,
-        level: 'JLPT N4/N5'
-      }
+      { quote: "First, solve the problem. Then, write the code.", author: "John Johnson", sub: "Consistency compounds over time into mastery." },
+      { quote: "Fall seven times, stand up eight.", author: "Proverb", sub: "Resilience defines successful problem solvers." },
+      { quote: "Talk is cheap. Show me the code.", author: "Linus Torvalds", sub: "Build solutions and ship consistently." },
+      { quote: "Simplicity is the soul of efficiency.", author: "Austin Freeman", sub: "Keep architectures clean and readable." },
+      { quote: "An investment in knowledge pays the best interest.", author: "Benjamin Franklin", sub: "Never stop learning and improving." },
+      { quote: "The only way to learn a new programming language is by writing programs in it.", author: "Dennis Ritchie", sub: "Learn by doing rather than just reading." },
+      { quote: "Small daily improvements over time lead to stunning results.", author: "Robin Sharma", sub: "A journey of a thousand miles begins with a single step." }
     ];
 
     const getInitialStudyHistory = () => {
       const today = new Date();
-      const formatKey = (d) => d.toISOString().split('T')[0];
-      const d1 = new Date(today);
-      d1.setDate(today.getDate() - 1);
-      const d2 = new Date(today);
-      d2.setDate(today.getDate() - 2);
-      const d3 = new Date(today);
-      d3.setDate(today.getDate() - 3);
+      const formatKey = localDateKey;
+      const d1 = new Date(today); d1.setDate(today.getDate() - 1);
+      const d2 = new Date(today); d2.setDate(today.getDate() - 2);
 
       return {
         [formatKey(today)]: {
           totalSeconds: 5400,
           sessions: [
             { id: 's-init-1', subject: 'DSA & C/Python', durationSecs: 3600, timestamp: '09:30 AM' },
-            { id: 's-init-2', subject: 'Japanese (JLPT N5)', durationSecs: 1800, timestamp: '04:15 PM' }
+            { id: 's-init-2', subject: 'Web Dev / Frontend', durationSecs: 1800, timestamp: '04:15 PM' }
           ]
         },
         [formatKey(d1)]: {
           totalSeconds: 7800,
           sessions: [
             { id: 's-init-3', subject: 'DSA & C/Python', durationSecs: 4800, timestamp: '07:00 PM' },
-            { id: 's-init-4', subject: 'AI / ML', durationSecs: 3000, timestamp: '09:15 PM' }
+            { id: 's-init-4', subject: 'College Core / CSE', durationSecs: 3000, timestamp: '09:15 PM' }
           ]
         },
         [formatKey(d2)]: {
           totalSeconds: 4500,
           sessions: [
-            { id: 's-init-5', subject: 'College / CSE', durationSecs: 4500, timestamp: '06:20 PM' }
-          ]
-        },
-        [formatKey(d3)]: {
-          totalSeconds: 9000,
-          sessions: [
-            { id: 's-init-6', subject: 'DSA & C/Python', durationSecs: 5400, timestamp: '05:00 PM' },
-            { id: 's-init-7', subject: 'Japanese (JLPT N5)', durationSecs: 3600, timestamp: '08:30 PM' }
+            { id: 's-init-5', subject: 'College Core / CSE', durationSecs: 4500, timestamp: '06:20 PM' }
           ]
         }
       };
@@ -462,7 +358,7 @@ print(freq.most_common(1)) # [(3, 3)]`,
     function App() {
       const loadState = (key, fallback) => {
         try {
-          const saved = localStorage.getItem(`vineet_cmd_${key}`);
+          const saved = localStorage.getItem(`dev_cmd_${key}`);
           return saved ? JSON.parse(saved) : fallback;
         } catch {
           return fallback;
@@ -470,14 +366,60 @@ print(freq.most_common(1)) # [(3, 3)]`,
       };
 
       const [activeNav, setActiveNav] = useState('dashboard');
-      const [xp, setXp] = useState(() => loadState('xp', 340));
-      const [tasks, setTasks] = useState(() => loadState('tasks', INITIAL_TASKS));
-      const [flashcards, setFlashcards] = useState(() => loadState('flashcards', INITIAL_FLASHCARDS));
+      const [xp, setXp] = useState(() => loadState('xp', 0));
+      const [categories, setCategories] = useState(() => loadState('categories', INITIAL_CATEGORIES));
+      const [tasks, setTasks] = useState(() => loadState('tasks', []));
       const [habits, setHabits] = useState(() => loadState('habits', INITIAL_HABITS));
+      const [habitWeekKey, setHabitWeekKey] = useState(() => loadState('habit_week_key', getWeekStartKey(new Date())));
+      const [noteTabs, setNoteTabs] = useState(() => loadState('noteTabs', INITIAL_NOTE_TABS));
       const [notes, setNotes] = useState(() => loadState('notes', INITIAL_NOTES));
       const [focusStats, setFocusStats] = useState(() =>
-        loadState('focusStats', { sessionsCompleted: 3, totalMinutes: 85 })
+        loadState('focusStats', { sessionsCompleted: 0, totalMinutes: 0 })
       );
+
+      // Category management state
+      const [showCategoryManager, setShowCategoryManager] = useState(false);
+      const [newCatName, setNewCatName] = useState('');
+      const [newCatColor, setNewCatColor] = useState(COLOR_PALETTES[0].value);
+
+      const handleAddCategory = (e) => {
+        e.preventDefault();
+        const trimmed = newCatName.trim();
+        if (!trimmed) return;
+        if (categories.some(c => c.name.toLowerCase() === trimmed.toLowerCase())) {
+          triggerToast('Category already exists!', 'sparkles');
+          return;
+        }
+        const newCategory = {
+          id: `cat-${Date.now()}`,
+          name: trimmed,
+          color: newCatColor
+        };
+        setCategories(prev => [...prev, newCategory]);
+        setNewCatName('');
+        triggerToast(`Category "${trimmed}" added!`, 'check');
+      };
+
+      const handleDeleteCategory = (catName) => {
+        if (categories.length <= 1) {
+          triggerToast('At least one category is required!', 'sparkles');
+          return;
+        }
+        const remainingCategories = categories.filter(c => c.name !== catName);
+        const fallbackCategory = remainingCategories[0]?.name || 'General';
+        setCategories(remainingCategories);
+        setTasks(prev => prev.map(task => task.category === catName ? { ...task, category: fallbackCategory } : task));
+        setHabits(prev => prev.map(habit => habit.category === catName ? { ...habit, category: fallbackCategory } : habit));
+        triggerToast(`Category "${catName}" removed; linked items moved to ${fallbackCategory}`, 'check');
+      };
+
+      const categoryStylesMap = useMemo(() => {
+        const map = {};
+        categories.forEach(c => {
+          map[c.name] = c.color;
+        });
+        return map;
+      }, [categories]);
 
       const [now, setNow] = useState(new Date());
       useEffect(() => {
@@ -485,21 +427,60 @@ print(freq.most_common(1)) # [(3, 3)]`,
         return () => clearInterval(timer);
       }, []);
 
-      useEffect(() => localStorage.setItem('vineet_cmd_xp', JSON.stringify(xp)), [xp]);
-      useEffect(() => localStorage.setItem('vineet_cmd_tasks', JSON.stringify(tasks)), [tasks]);
-      useEffect(() => localStorage.setItem('vineet_cmd_flashcards', JSON.stringify(flashcards)), [flashcards]);
-      useEffect(() => localStorage.setItem('vineet_cmd_habits', JSON.stringify(habits)), [habits]);
-      useEffect(() => localStorage.setItem('vineet_cmd_notes', JSON.stringify(notes)), [notes]);
-      useEffect(() => localStorage.setItem('vineet_cmd_focusStats', JSON.stringify(focusStats)), [focusStats]);
+      useEffect(() => { safeSaveState('xp', xp); }, [xp]);
+      useEffect(() => { safeSaveState('categories', categories); }, [categories]);
+      useEffect(() => { safeSaveState('tasks', tasks); }, [tasks]);
+      useEffect(() => { safeSaveState('habits', habits); }, [habits]);
+      useEffect(() => { safeSaveState('habit_week_key', habitWeekKey); }, [habitWeekKey]);
+      useEffect(() => {
+        const thisWeek = getWeekStartKey(new Date());
+        if (habitWeekKey !== thisWeek) {
+          setHabits(prev => prev.map(habit => ({ ...habit, days: Array(7).fill(false), streak: 0 })));
+          setHabitWeekKey(thisWeek);
+        }
+      }, [habitWeekKey]);
+      useEffect(() => { safeSaveState('noteTabs', noteTabs); }, [noteTabs]);
+      useEffect(() => { safeSaveState('notes', notes); }, [notes]);
+      useEffect(() => { safeSaveState('focusStats', focusStats); }, [focusStats]);
 
       const [toast, setToast] = useState(null);
+      const toastTimeoutRef = useRef(null);
       const triggerToast = (message, icon = 'sparkles') => {
+        if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
         setToast({ message, icon });
-        setTimeout(() => setToast(null), 3200);
+        toastTimeoutRef.current = setTimeout(() => setToast(null), 3200);
       };
+      useEffect(() => () => {
+        if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+      }, []);
 
+      const [customTimerModes, setCustomTimerModes] = useState(() => loadState('customTimerModes', []));
       const [selectedMode, setSelectedMode] = useState(TIMER_MODES[0]);
+      const [showAddTimerTab, setShowAddTimerTab] = useState(false);
+      const [newTimerTabName, setNewTimerTabName] = useState('');
+      const [newTimerTabMinutes, setNewTimerTabMinutes] = useState(25);
       const [customMinutes, setCustomMinutes] = useState(25);
+      const allTimerModes = [...TIMER_MODES, ...customTimerModes];
+
+      useEffect(() => { safeSaveState('customTimerModes', customTimerModes); }, [customTimerModes]);
+
+      const handleAddTimerTab = (e) => {
+        e.preventDefault();
+        const label = newTimerTabName.trim();
+        const minutes = Math.min(180, Math.max(1, Number(newTimerTabMinutes) || 25));
+        if (!label) return;
+        if (allTimerModes.some((mode) => mode.label.toLowerCase() === label.toLowerCase())) {
+          triggerToast('A timer tab with that name already exists.', 'sparkles');
+          return;
+        }
+        const mode = { id: `custom-${Date.now()}`, label, minutes, badge: `${minutes}m` };
+        setCustomTimerModes((prev) => [...prev, mode]);
+        selectTimerMode(mode);
+        setNewTimerTabName('');
+        setNewTimerTabMinutes(25);
+        setShowAddTimerTab(false);
+        triggerToast(`Timer tab “${label}” added`, 'check');
+      };
       const [timeLeft, setTimeLeft] = useState(TIMER_MODES[0].minutes * 60);
       const [totalTime, setTotalTime] = useState(TIMER_MODES[0].minutes * 60);
       const [isRunning, setIsRunning] = useState(false);
@@ -512,28 +493,64 @@ print(freq.most_common(1)) # [(3, 3)]`,
 
       const [taskFilter, setTaskFilter] = useState('All');
       const [newTaskTitle, setNewTaskTitle] = useState('');
-      const [newTaskCategory, setNewTaskCategory] = useState('DSA & C/Python');
+      const [newTaskCategory, setNewTaskCategory] = useState(() => categories[0]?.name || 'General');
       const [newTaskPriority, setNewTaskPriority] = useState('Medium');
       const [showAddTask, setShowAddTask] = useState(false);
 
-      const [studyTab, setStudyTab] = useState('jlpt');
-      const [currentCardIdx, setCurrentCardIdx] = useState(0);
-      const [isFlipped, setIsFlipped] = useState(false);
-      const [showAddCard, setShowAddCard] = useState(false);
-      const [newCardJp, setNewCardJp] = useState('');
-      const [newCardRomaji, setNewCardRomaji] = useState('');
-      const [newCardEn, setNewCardEn] = useState('');
-      const [csSearch, setCsSearch] = useState('');
+      useEffect(() => {
+        if (categories.length > 0 && !categories.some(c => c.name === newTaskCategory)) {
+          setNewTaskCategory(categories[0].name);
+        }
+      }, [categories]);
 
-      const [activeNoteTab, setActiveNoteTab] = useState('snippets');
+      useEffect(() => {
+        if (categories.length > 0 && !categories.some(c => c.name === stopwatchSubject)) {
+          setStopwatchSubject(categories[0].name);
+        }
+      }, [categories]);
+
+      const [activeNoteTab, setActiveNoteTab] = useState(() => {
+        const savedTabs = loadState('noteTabs', INITIAL_NOTE_TABS);
+        return savedTabs[0]?.id || 'snippets';
+      });
+      const [showAddNoteTab, setShowAddNoteTab] = useState(false);
+      const [newNoteTabTitle, setNewNoteTabTitle] = useState('');
       const [copiedNote, setCopiedNote] = useState(false);
+
+      const handleAddNoteTab = (e) => {
+        e.preventDefault();
+        const trimmed = newNoteTabTitle.trim();
+        if (!trimmed) return;
+        const newId = `tab_${Date.now()}`;
+        const newTab = { id: newId, label: trimmed };
+        setNoteTabs((prev) => [...prev, newTab]);
+        setNotes((prev) => ({ ...prev, [newId]: `# ${trimmed}\n\n` }));
+        setActiveNoteTab(newId);
+        setNewNoteTabTitle('');
+        setShowAddNoteTab(false);
+        triggerToast(`Added "${trimmed}" section to scratchpad!`, 'check');
+      };
+
+      const handleDeleteNoteTab = (e, tabId, tabLabel) => {
+        e.stopPropagation();
+        if (noteTabs.length <= 1) {
+          triggerToast('At least one scratchpad section is required!', 'sparkles');
+          return;
+        }
+        const remaining = noteTabs.filter((t) => t.id !== tabId);
+        setNoteTabs(remaining);
+        if (activeNoteTab === tabId && remaining.length > 0) {
+          setActiveNoteTab(remaining[0].id);
+        }
+        triggerToast(`Removed "${tabLabel}" section`, 'check');
+      };
 
       const [use24Hour, setUse24Hour] = useState(false);
       const [zenClockMode, setZenClockMode] = useState('clock');
       const [stopwatchRunning, setStopwatchRunning] = useState(false);
       const [stopwatchSecs, setStopwatchSecs] = useState(() => loadState('stopwatch_active_secs', 0));
-      const [stopwatchSubject, setStopwatchSubject] = useState('DSA & C/Python');
-      const [studyHistory, setStudyHistory] = useState(() => loadState('study_history', getInitialStudyHistory()));
+      const [stopwatchSubject, setStopwatchSubject] = useState(() => categories[0]?.name || 'General');
+      const [studyHistory, setStudyHistory] = useState(() => loadState('study_history', {}));
 
       const dayOfYearIndex = useMemo(() => {
         const start = new Date(now.getFullYear(), 0, 0);
@@ -544,14 +561,13 @@ print(freq.most_common(1)) # [(3, 3)]`,
       const [manualDayOffset, setManualDayOffset] = useState(0);
       const activeWallpaper = DAILY_WALLPAPERS[(dayOfYearIndex + manualDayOffset) % DAILY_WALLPAPERS.length];
       const activeQuote = DAILY_QUOTES[(dayOfYearIndex + manualDayOffset) % DAILY_QUOTES.length];
-      const activeKanji = DAILY_KANJI_LIST[(dayOfYearIndex + manualDayOffset) % DAILY_KANJI_LIST.length];
 
       useEffect(() => {
-        localStorage.setItem('vineet_cmd_stopwatch_active_secs', JSON.stringify(stopwatchSecs));
-      }, [stopwatchSecs, stopwatchRunning]);
+        safeSaveState('stopwatch_active_secs', stopwatchSecs);
+      }, [stopwatchSecs]);
 
       useEffect(() => {
-        localStorage.setItem('vineet_cmd_study_history', JSON.stringify(studyHistory));
+        safeSaveState('study_history', studyHistory);
       }, [studyHistory]);
 
       useEffect(() => {
@@ -584,14 +600,14 @@ print(freq.most_common(1)) # [(3, 3)]`,
       };
 
       const handleLogStopwatchSession = () => {
-        if (stopwatchSecs < 5) {
-          triggerToast('Run the stopwatch for at least 5 seconds to log a session!', 'sparkles');
+        if (stopwatchSecs < 60) {
+          triggerToast('Study for at least 1 minute before logging a session.', 'sparkles');
           return;
         }
         setStopwatchRunning(false);
-        const todayKey = now.toISOString().split('T')[0];
+        const todayKey = localDateKey(now);
         const timeStampStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        const earnedXp = Math.max(15, Math.round(stopwatchSecs / 60) * 2);
+        const earnedXp = Math.max(2, Math.floor(stopwatchSecs / 60) * 2);
 
         setStudyHistory((prev) => {
           const existingDay = prev[todayKey] || { totalSeconds: 0, sessions: [] };
@@ -614,7 +630,7 @@ print(freq.most_common(1)) # [(3, 3)]`,
         setStopwatchSecs(0);
         setXp((x) => x + earnedXp);
         playCompletionChime();
-        triggerToast(`Logged ${loggedTime} of ${stopwatchSubject} to today's record! (+${earnedXp} XP)`, 'trophy');
+        triggerToast(`Logged ${loggedTime} of ${stopwatchSubject}! (+${earnedXp} XP)`, 'trophy');
       };
 
       const deleteStudyDayEntry = (dateKey, sessionId, durationSecs) => {
@@ -627,225 +643,11 @@ print(freq.most_common(1)) # [(3, 3)]`,
           if (updatedSessions.length === 0) {
             delete next[dateKey];
           } else {
-            next[dateKey] = {
-              totalSeconds: updatedTotal,
-              sessions: updatedSessions
-            };
+            next[dateKey] = { totalSeconds: updatedTotal, sessions: updatedSessions };
           }
           return next;
         });
         triggerToast('Session removed from study log', 'check');
-      };
-
-      const [aiSprintGoal, setAiSprintGoal] = useState('');
-      const [showAiSprintModal, setShowAiSprintModal] = useState(false);
-      const [isGeneratingTasks, setIsGeneratingTasks] = useState(false);
-
-      const [aiDeckTopic, setAiDeckTopic] = useState('');
-      const [showAiDeckModal, setShowAiDeckModal] = useState(false);
-      const [isGeneratingCards, setIsGeneratingCards] = useState(false);
-      const [cardAiExplanation, setCardAiExplanation] = useState(null);
-      const [isExplainingCard, setIsExplainingCard] = useState(false);
-
-      const [isAiProcessingNote, setIsAiProcessingNote] = useState(false);
-
-      const [aiChatInput, setAiChatInput] = useState('');
-      const [aiPersona, setAiPersona] = useState('dsa');
-      const [isAiChatLoading, setIsAiChatLoading] = useState(false);
-      const [aiMessages, setAiMessages] = useState([
-        {
-          role: 'assistant',
-          text: "Hey Vineet! I'm your Gemini CSE & JLPT AI Copilot. Ask me to explain a C pointer concept, debug Python code, quiz you on JLPT N5 particles, or brainstorm AI/ML hackathon architectures!"
-        }
-      ]);
-
-      const handleAiGenerateSprint = async (e) => {
-        e.preventDefault();
-        if (!aiSprintGoal.trim() || isGeneratingTasks) return;
-        setIsGeneratingTasks(true);
-        try {
-          const schema = {
-            type: "ARRAY",
-            items: {
-              type: "OBJECT",
-              properties: {
-                title: { type: "STRING" },
-                category: { type: "STRING" },
-                priority: { type: "STRING" },
-                xp: { type: "INTEGER" }
-              },
-              propertyOrdering: ["title", "category", "priority", "xp"]
-            }
-          };
-
-          const systemInstruction = `You are an expert CSE academic & coding coach for Vineet (Sem 2 CSE student learning C, Python, DSA, AI/ML, and Japanese JLPT N5). Break down the user's study/coding goal into 3 actionable, specific micro-tasks.
-Allowed categories ONLY: "DSA & C/Python", "AI / ML", "Japanese (JLPT N5)", "College / CSE".
-Allowed priorities ONLY: "High", "Medium", "Low".
-XP should be between 30 and 60.`;
-
-          const generated = await callGeminiAPI({
-            prompt: `Create 3 actionable study/coding sprint tasks for this goal: "${aiSprintGoal}"`,
-            systemInstruction,
-            responseSchema: schema
-          });
-
-          if (Array.isArray(generated) && generated.length > 0) {
-            const validCategories = ['DSA & C/Python', 'AI / ML', 'Japanese (JLPT N5)', 'College / CSE'];
-            const validPriorities = ['High', 'Medium', 'Low'];
-            const newItems = generated.map((item, idx) => ({
-              id: `t-ai-${Date.now()}-${idx}`,
-              title: item.title || 'Study Task',
-              category: validCategories.includes(item.category) ? item.category : 'DSA & C/Python',
-              priority: validPriorities.includes(item.priority) ? item.priority : 'Medium',
-              status: 'todo',
-              xp: Number(item.xp) || 40
-            }));
-            setTasks((prev) => [...newItems, ...prev]);
-            setXp((x) => x + 15);
-            setAiSprintGoal('');
-            setShowAiSprintModal(false);
-            triggerToast(`✨ AI generated ${newItems.length} sprint tasks! (+15 XP)`, 'sparkles');
-          }
-        } catch (err) {
-          triggerToast('Could not reach Gemini AI. Check API Key.', 'sparkles');
-        } finally {
-          setIsGeneratingTasks(false);
-        }
-      };
-
-      const handleAiGenerateCards = async (e) => {
-        e.preventDefault();
-        if (!aiDeckTopic.trim() || isGeneratingCards) return;
-        setIsGeneratingCards(true);
-        try {
-          const schema = {
-            type: "ARRAY",
-            items: {
-              type: "OBJECT",
-              properties: {
-                jp: { type: "STRING" },
-                romaji: { type: "STRING" },
-                en: { type: "STRING" },
-                type: { type: "STRING" }
-              },
-              propertyOrdering: ["jp", "romaji", "en", "type"]
-            }
-          };
-
-          const systemInstruction = `You are a Japanese JLPT N5 teacher. Generate 4 useful JLPT N5 flashcards related to the user's topic. Include Hiragana/Kanji in 'jp' (e.g. "たべます (食べます)"), Romaji in 'romaji', clear English meaning in 'en', and short tag in 'type' (e.g. "Verb (N5)", "Vocab (N5)", "Grammar (N5)").`;
-
-          const generated = await callGeminiAPI({
-            prompt: `Generate 4 JLPT N5 flashcards for topic: "${aiDeckTopic}"`,
-            systemInstruction,
-            responseSchema: schema
-          });
-
-          if (Array.isArray(generated) && generated.length > 0) {
-            const added = generated.map((c, i) => ({
-              id: `f-ai-${Date.now()}-${i}`,
-              jp: c.jp || 'ことば',
-              romaji: c.romaji || 'Kotoba',
-              en: c.en || 'Word',
-              type: c.type || 'AI N5',
-              mastered: false
-            }));
-            setFlashcards((prev) => {
-              const updated = [...prev, ...added];
-              setCurrentCardIdx(prev.length);
-              return updated;
-            });
-            setIsFlipped(false);
-            setAiDeckTopic('');
-            setShowAiDeckModal(false);
-            setXp((x) => x + 20);
-            triggerToast(`✨ Added ${added.length} AI JLPT N5 flashcards! (+20 XP)`, 'sparkles');
-          }
-        } catch (err) {
-          triggerToast('AI card generation failed. Check API key.', 'sparkles');
-        } finally {
-          setIsGeneratingCards(false);
-        }
-      };
-
-      const handleExplainCurrentCard = async () => {
-        if (!currentCard || isExplainingCard) return;
-        setIsExplainingCard(true);
-        setCardAiExplanation(null);
-        try {
-          const systemInstruction = `You are a friendly JLPT N5 Japanese Sensei. Given a vocabulary word or kana, provide:
-1) One simple JLPT N5 example sentence in Japanese, Romaji, and English.
-2) A quick memory mnemonic or grammar tip (max 3 short bullet lines total). Keep it super concise.`;
-
-          const text = await callGeminiAPI({
-            prompt: `Explain this JLPT N5 card: Japanese: "${currentCard.jp}", Romaji: "${currentCard.romaji}", Meaning: "${currentCard.en}"`,
-            systemInstruction
-          });
-          setCardAiExplanation(text);
-        } catch (err) {
-          triggerToast('Could not fetch AI Sensei explanation.', 'sparkles');
-        } finally {
-          setIsExplainingCard(false);
-        }
-      };
-
-      const handleAiScratchpadAssist = async (mode) => {
-        const currentText = notes[activeNoteTab] || '';
-        if (!currentText.trim() || isAiProcessingNote) return;
-        setIsAiProcessingNote(true);
-        try {
-          let prompt = '';
-          if (mode === 'optimize') {
-            prompt = `Review the following scratchpad notes/code. Add concise, helpful comments, time/space complexity notes (if code), or clean formatting without removing the user's core content:\n\n${currentText}`;
-          } else if (mode === 'quiz') {
-            prompt = `Based on these notes, append 2 quick practice questions or mini-challenges (with brief answers) at the bottom so Vineet can test his understanding:\n\n${currentText}`;
-          }
-
-          const systemInstruction = `You are an expert CSE & JLPT study assistant. Return the updated scratchpad text directly in clean plain text / markdown format without wrapping the entire response in outer markdown code fences.`;
-          const updated = await callGeminiAPI({ prompt, systemInstruction });
-          setNotes((prev) => ({
-            ...prev,
-            [activeNoteTab]: updated.trim()
-          }));
-          setXp((x) => x + 15);
-          triggerToast('✨ Scratchpad enhanced by Gemini AI! (+15 XP)', 'sparkles');
-        } catch (err) {
-          triggerToast('AI Scratchpad action failed.', 'sparkles');
-        } finally {
-          setIsAiProcessingNote(false);
-        }
-      };
-
-      const handleSendAiChat = async (customPrompt = null) => {
-        const query = (customPrompt || aiChatInput).trim();
-        if (!query || isAiChatLoading) return;
-
-        const userMsg = { role: 'user', text: query };
-        setAiMessages((prev) => [...prev, userMsg]);
-        if (!customPrompt) setAiChatInput('');
-        setIsAiChatLoading(true);
-
-        try {
-          const personaPrompts = {
-            dsa: "You are an elite C, C++, Python, and Data Structures & Algorithms mentor for Vineet, a Sem 2 CSE student. Give clear, concise explanations with clean code snippets and Big-O complexity analysis.",
-            sensei: "You are a warm, encouraging Japanese JLPT N5 Sensei. Explain vocabulary, particles (wa, ga, wo, ni, de), and grammar clearly using Japanese, Romaji, and English.",
-            project: "You are a Hackathon & AI/ML Architect mentor. Help brainstorm high-impact CSE projects, Gemini API integrations, and smart digital-twin architectures with practical implementation steps."
-          };
-
-          const reply = await callGeminiAPI({
-            prompt: query,
-            systemInstruction: personaPrompts[aiPersona] || personaPrompts.dsa
-          });
-
-          setAiMessages((prev) => [...prev, { role: 'assistant', text: reply }]);
-          setXp((x) => x + 10);
-        } catch (err) {
-          setAiMessages((prev) => [
-            ...prev,
-            { role: 'assistant', text: '⚠️ Connection to Gemini API timed out. Please check your API key.' }
-          ]);
-        } finally {
-          setIsAiChatLoading(false);
-        }
       };
 
       const stopAmbientAudio = () => {
@@ -955,9 +757,7 @@ XP should be between 30 and 60.`;
             oscRight.start();
             activeNodesRef.current = [oscLeft, oscRight, gainNodes, masterGain];
           }
-        } catch (e) {
-          console.error('Web Audio error:', e);
-        }
+        } catch (e) {}
       };
 
       useEffect(() => {
@@ -978,15 +778,16 @@ XP should be between 30 and 60.`;
                 sessionsCompleted: st.sessionsCompleted + 1,
                 totalMinutes: st.totalMinutes + minsCompleted
               }));
-              setXp((x) => x + 60);
-              triggerToast(`Focus Session Complete! +60 XP & ${minsCompleted}m logged`, 'trophy');
+              const earnedXp = Math.max(2, Math.round(minsCompleted * 2));
+              setXp((x) => x + earnedXp);
+              triggerToast(`Focus session complete (${selectedMode.label})! +${earnedXp} XP & ${minsCompleted}m logged`, 'trophy');
               return 0;
             }
             return prev - 1;
           });
         }, 1000);
         return () => clearInterval(interval);
-      }, [isRunning, totalTime]);
+      }, [isRunning, totalTime, selectedMode]);
 
       const selectTimerMode = (mode) => {
         setIsRunning(false);
@@ -1033,11 +834,12 @@ XP should be between 30 and 60.`;
         setTasks((prev) =>
           prev.map((t) => {
             if (t.id === taskId) {
-              if (t.status !== 'completed' && newStatus === 'completed') {
-                setXp((x) => x + t.xp);
-                triggerToast(`Task Completed! +${t.xp} XP earned`, 'zap');
+              const shouldAwardXp = newStatus === 'completed' && t.status !== 'completed' && !t.xpAwarded;
+              if (shouldAwardXp) {
+                setXp((x) => x + (Number(t.xp) || 0));
+                triggerToast(`Task Completed! +${Number(t.xp) || 0} XP earned`, 'zap');
               }
-              return { ...t, status: newStatus };
+              return { ...t, status: newStatus, xpAwarded: Boolean(t.xpAwarded || shouldAwardXp) };
             }
             return t;
           })
@@ -1053,54 +855,22 @@ XP should be between 30 and 60.`;
         return tasks.filter((t) => t.category === taskFilter);
       }, [tasks, taskFilter]);
 
-      const toggleCardMastered = (id) => {
-        setFlashcards((prev) =>
-          prev.map((c) => {
-            if (c.id === id) {
-              const nextState = !c.mastered;
-              if (nextState) {
-                setXp((x) => x + 15);
-                triggerToast('JLPT Card Marked Mastered! +15 XP', 'sparkles');
-              }
-              return { ...c, mastered: nextState };
-            }
-            return c;
-          })
-        );
-      };
-
-      const handleAddCard = (e) => {
-        e.preventDefault();
-        if (!newCardJp.trim() || !newCardEn.trim()) return;
-        const card = {
-          id: `f-${Date.now()}`,
-          jp: newCardJp.trim(),
-          romaji: newCardRomaji.trim() || '—',
-          en: newCardEn.trim(),
-          type: 'Custom N5',
-          mastered: false
-        };
-        setFlashcards([...flashcards, card]);
-        setCurrentCardIdx(flashcards.length);
-        setNewCardJp('');
-        setNewCardRomaji('');
-        setNewCardEn('');
-        setShowAddCard(false);
-        triggerToast('Added custom JLPT flashcard!', 'check');
-      };
-
       const toggleHabitDay = (habitId, dayIdx) => {
         setHabits((prev) =>
           prev.map((h) => {
             if (h.id !== habitId) return h;
-            const updatedDays = [...h.days];
+            const updatedDays = [...(Array.isArray(h.days) ? h.days : Array(7).fill(false))];
+            const earnedDays = Array.isArray(h.earnedDays) ? [...h.earnedDays] : [];
             updatedDays[dayIdx] = !updatedDays[dayIdx];
-            const count = updatedDays.filter(Boolean).length;
-            if (updatedDays[dayIdx]) {
+            const todayKey = localDateKey(new Date());
+            const shouldAwardXp = updatedDays[dayIdx] && !earnedDays.includes(todayKey);
+            if (shouldAwardXp) {
+              earnedDays.push(todayKey);
               setXp((x) => x + 20);
-              triggerToast(`Habit Checked! +20 XP`, 'flame');
+              triggerToast('Habit checked! +20 XP earned today', 'flame');
             }
-            return { ...h, days: updatedDays, streak: count };
+            const todayIndex = (new Date().getDay() + 6) % 7;
+            return { ...h, days: updatedDays, earnedDays, streak: getHabitStreak(updatedDays, todayIndex) };
           })
         );
       };
@@ -1110,9 +880,10 @@ XP should be between 30 and 60.`;
           exportedAt: new Date().toISOString(),
           xp,
           focusStats,
+          categories,
           tasks,
-          flashcards,
           habits,
+          noteTabs,
           notes,
           studyHistory
         };
@@ -1120,45 +891,71 @@ XP should be between 30 and 60.`;
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `vineet-command-center-backup.json`;
+        a.download = `dev-command-center-backup.json`;
+        document.body.appendChild(a);
         a.click();
-        URL.revokeObjectURL(url);
+        a.remove();
+        // Give the browser time to start the download before revoking its URL.
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
         triggerToast('Workspace JSON exported!', 'download');
       };
 
       const handleResetDemo = () => {
-        setXp(340);
-        setTasks(INITIAL_TASKS);
-        setFlashcards(INITIAL_FLASHCARDS);
+        const confirmed = window.confirm('Reset this workspace? Your saved tasks, notes, habits, XP, and study history on this browser will be replaced with a clean starter workspace. Export a backup first if you need it.');
+        if (!confirmed) return;
+        setXp(0);
+        setCategories(INITIAL_CATEGORIES);
+        setTasks([]);
         setHabits(INITIAL_HABITS);
+        setNoteTabs(INITIAL_NOTE_TABS);
         setNotes(INITIAL_NOTES);
-        setFocusStats({ sessionsCompleted: 3, totalMinutes: 85 });
-        setStudyHistory(getInitialStudyHistory());
+        setActiveNoteTab(INITIAL_NOTE_TABS[0].id);
+        setFocusStats({ sessionsCompleted: 0, totalMinutes: 0 });
+        setStudyHistory({});
         setStopwatchSecs(0);
         setStopwatchRunning(false);
-        triggerToast('Workspace restored to starter demo data', 'refresh');
+        triggerToast('Workspace reset to a clean starter state', 'refresh');
       };
 
-      const copyScratchpad = () => {
-        navigator.clipboard.writeText(notes[activeNoteTab] || '');
-        setCopiedNote(true);
-        setTimeout(() => setCopiedNote(false), 1800);
-        triggerToast('Copied scratchpad to clipboard!', 'check');
+      const copyScratchpad = async () => {
+        const textToCopy = notes[activeNoteTab] || '';
+        try {
+          if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(textToCopy);
+          } else {
+            const textArea = document.createElement('textarea');
+            textArea.value = textToCopy;
+            textArea.setAttribute('readonly', '');
+            textArea.style.position = 'fixed';
+            textArea.style.opacity = '0';
+            document.body.appendChild(textArea);
+            textArea.select();
+            const copied = document.execCommand('copy');
+            document.body.removeChild(textArea);
+            if (!copied) throw new Error('Clipboard copy was blocked');
+          }
+          setCopiedNote(true);
+          setTimeout(() => setCopiedNote(false), 1800);
+          triggerToast('Scratchpad copied to clipboard', 'check');
+        } catch (error) {
+          triggerToast('Copy was blocked by the browser. Select the text and copy it manually.', 'sparkles');
+        }
       };
 
       const currentLevel = Math.floor(xp / 100) + 1;
       const xpInCurrentLevel = xp % 100;
       const totalStreak = habits.reduce((acc, h) => acc + h.streak, 0);
-      const currentCard = flashcards[currentCardIdx] || flashcards[0];
 
       return (
         <div className="min-h-screen bg-[#0b0f19] text-slate-100 flex flex-col lg:flex-row font-sans selection:bg-indigo-500 selection:text-white overflow-x-hidden">
+          {/* Ambient Glows */}
           <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
             <div className="absolute -top-32 -left-32 w-96 h-96 bg-indigo-600/15 rounded-full blur-3xl" />
             <div className="absolute top-1/3 -right-32 w-96 h-96 bg-cyan-500/10 rounded-full blur-3xl" />
             <div className="absolute -bottom-32 left-1/3 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl" />
           </div>
 
+          {/* Toast */}
           {toast && (
             <div className="fixed bottom-6 right-6 z-50 flex items-center gap-3 px-4 py-3 rounded-xl bg-slate-900/95 border border-indigo-500/40 shadow-2xl shadow-indigo-500/20 backdrop-blur-md animate-bounce">
               <Sparkles className="w-5 h-5 text-indigo-400 shrink-0" />
@@ -1166,6 +963,7 @@ XP should be between 30 and 60.`;
             </div>
           )}
 
+          {/* Sidebar */}
           <aside className="relative z-10 w-full lg:w-64 bg-slate-900/60 backdrop-blur-xl border-b lg:border-b-0 lg:border-r border-slate-800/80 flex flex-col justify-between shrink-0">
             <div>
               <div className="p-5 border-b border-slate-800/80 flex items-center justify-between">
@@ -1177,9 +975,9 @@ XP should be between 30 and 60.`;
                   </div>
                   <div>
                     <h1 className="font-bold text-base tracking-tight text-white flex items-center gap-1.5">
-                      VINEET<span className="text-xs px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-mono">OS</span>
+                      StudyForge
                     </h1>
-                    <p className="text-xs text-slate-400">CSE & Study Command</p>
+                    <p className="text-xs text-slate-400">Focus. Build. Learn.</p>
                   </div>
                 </div>
               </div>
@@ -1187,11 +985,9 @@ XP should be between 30 and 60.`;
               <nav className="p-3 flex lg:flex-col gap-1.5 overflow-x-auto">
                 {[
                   { id: 'dashboard', label: 'Command Grid', icon: LayoutGrid, badge: 'All' },
-                  { id: 'zen_clock', label: 'Zen Clock & Log', icon: Watch, badge: stopwatchRunning ? formatStopwatch(stopwatchSecs).formatted : 'Live' },
-                  { id: 'ai_tutor', label: 'AI Copilot Hub', icon: Bot, badge: 'Gemini' },
+                  { id: 'zen_clock', label: 'Zen Clock & Timewatch', icon: Watch, badge: stopwatchRunning ? formatStopwatch(stopwatchSecs).formatted : 'Live' },
                   { id: 'focus', label: 'Focus & Synth', icon: Clock, badge: formatTime(timeLeft) },
                   { id: 'kanban', label: 'Kanban Board', icon: Layers, badge: tasks.filter(t => t.status !== 'completed').length },
-                  { id: 'study', label: 'JLPT & DSA Deck', icon: BookOpen, badge: 'N5' },
                   { id: 'scratchpad', label: 'Dev Scratchpad', icon: Code2, badge: 'Code' }
                 ].map((item) => {
                   const Icon = item.icon;
@@ -1224,29 +1020,35 @@ XP should be between 30 and 60.`;
             <div className="hidden lg:block p-4 m-3 rounded-2xl bg-slate-950/80 border border-slate-800/90">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-medium text-slate-400 flex items-center gap-1.5">
-                  <Cpu className="w-3.5 h-3.5 text-emerald-400" /> Active Stack
+                  <Cpu className="w-3.5 h-3.5 text-emerald-400" /> Categories ({categories.length})
                 </span>
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <button
+                  onClick={() => setShowCategoryManager(true)}
+                  className="text-[11px] font-mono text-cyan-400 hover:text-cyan-300 transition flex items-center gap-1"
+                >
+                  <Settings className="w-3 h-3" /> Manage
+                </button>
               </div>
               <div className="flex flex-wrap gap-1.5 mt-2">
-                {['Python', 'C / C++', 'DSA', 'AI/ML', 'JLPT N5'].map((tag) => (
+                {categories.map((cat) => (
                   <span
-                    key={tag}
-                    className="text-[11px] font-mono px-2 py-0.5 rounded-md bg-slate-900 border border-slate-800 text-slate-300"
+                    key={cat.id}
+                    className={`text-[11px] font-mono px-2 py-0.5 rounded-md border ${cat.color}`}
                   >
-                    {tag}
+                    {cat.name}
                   </span>
                 ))}
               </div>
             </div>
           </aside>
 
+          {/* Main Area */}
           <div className="relative z-10 flex-1 flex flex-col min-w-0">
             <header className="px-6 py-4 bg-slate-900/40 backdrop-blur-xl border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-4">
               <div>
                 <div className="flex items-center gap-2">
                   <h2 className="text-lg sm:text-xl font-bold text-white tracking-tight">
-                    Vineet&apos;s Command Center
+                    StudyForge
                   </h2>
                   <span className="hidden sm:inline-flex items-center gap-1 text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-medium">
                     <Sparkles className="w-3 h-3" /> Sem 1 CSE
@@ -1259,6 +1061,14 @@ XP should be between 30 and 60.`;
               </div>
 
               <div className="flex flex-wrap items-center gap-3">
+                <button
+                  onClick={() => setShowCategoryManager(true)}
+                  className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-800 transition flex items-center gap-1.5 text-xs font-medium"
+                >
+                  <Settings className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Categories</span>
+                </button>
+
                 <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900/90 border border-slate-800">
                   <Flame className="w-4 h-4 text-amber-400" />
                   <div className="text-xs">
@@ -1292,7 +1102,7 @@ XP should be between 30 and 60.`;
                   </button>
                   <button
                     onClick={handleResetDemo}
-                    title="Reset to Demo Data"
+                    title="Reset workspace (this browser only)"
                     className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition flex items-center gap-1.5 text-xs"
                   >
                     <RefreshCw className="w-3.5 h-3.5 text-rose-400" />
@@ -1302,7 +1112,95 @@ XP should be between 30 and 60.`;
               </div>
             </header>
 
+            {/* CATEGORY MANAGER MODAL */}
+            {showCategoryManager && (
+              <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md p-6 shadow-2xl space-y-5">
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                    <div className="flex items-center gap-2">
+                      <Settings className="w-5 h-5 text-cyan-400" />
+                      <h3 className="font-bold text-base text-white">Manage Categories</h3>
+                    </div>
+                    <button
+                      onClick={() => setShowCategoryManager(false)}
+                      className="text-slate-400 hover:text-white p-1 rounded-lg bg-slate-800 transition"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <form onSubmit={handleAddCategory} className="space-y-3">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-400 mb-1">New Category Name</label>
+                      <input
+                        type="text"
+                        placeholder="e.g., Artificial Intelligence, DevOps..."
+                        value={newCatName}
+                        onChange={(e) => setNewCatName(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-slate-400 mb-1">Badge Color Palette</label>
+                      <select
+                        value={newCatColor}
+                        onChange={(e) => setNewCatColor(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-cyan-400"
+                      >
+                        {COLOR_PALETTES.map((pal) => (
+                          <option key={pal.label} value={pal.value}>
+                            {pal.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <button
+                      type="submit"
+                      className="w-full py-2.5 rounded-xl bg-gradient-to-r from-indigo-500 to-cyan-500 text-white font-bold text-xs transition shadow-lg shadow-indigo-500/20"
+                    >
+                      + Add Category
+                    </button>
+                  </form>
+
+                  <div className="space-y-2 pt-2 border-t border-slate-800">
+                    <span className="text-xs font-mono uppercase tracking-wider text-slate-400">Existing Categories</span>
+                    <div className="max-h-48 overflow-y-auto space-y-2 pr-1">
+                      {categories.map((cat) => (
+                        <div
+                          key={cat.id}
+                          className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs"
+                        >
+                          <span className={`px-2.5 py-0.5 rounded-md border font-medium ${cat.color}`}>
+                            {cat.name}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteCategory(cat.name)}
+                            className="p-1.5 rounded-lg bg-slate-900 hover:bg-red-500/20 text-slate-400 hover:text-red-400 transition"
+                            title="Delete category"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowCategoryManager(false)}
+                      className="w-full py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs transition"
+                    >
+                      Done
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <main className="p-4 sm:p-6 flex-1 overflow-y-auto space-y-6">
+              {/* ZEN CLOCK & TIMEWATCH TAB */}
               {activeNav === 'zen_clock' && (
                 <div className="space-y-6">
                   <section
@@ -1315,12 +1213,11 @@ XP should be between 30 and 60.`;
                       <div className="flex items-center gap-2.5 bg-slate-950/70 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-white/10">
                         <ImageIcon className="w-3.5 h-3.5 text-cyan-400" />
                         <span className="text-xs font-medium text-slate-200">
-                          Daily Wallpaper: <strong className="text-white">{activeWallpaper.name}</strong>
+                          Wallpaper: <strong className="text-white">{activeWallpaper.name}</strong>
                         </span>
                         <button
                           onClick={() => setManualDayOffset((prev) => prev + 1)}
                           className="ml-1 text-[11px] font-mono px-2 py-0.5 rounded-full bg-white/10 hover:bg-white/20 text-cyan-300 transition"
-                          title="Preview Tomorrow's Wallpaper, Quote & Kanji"
                         >
                           Cycle Daily ↻
                         </button>
@@ -1405,7 +1302,7 @@ XP should be between 30 and 60.`;
                             >
                               <Watch className="w-4 h-4 text-emerald-400" />
                               {stopwatchRunning
-                                ? `Timewatch Running (${formatStopwatch(stopwatchSecs).formatted}) — View`
+                                ? `Timewatch Active (${formatStopwatch(stopwatchSecs).formatted}) — View`
                                 : 'Open Study Timewatch Recorder'}
                             </button>
                           </div>
@@ -1446,10 +1343,9 @@ XP should be between 30 and 60.`;
                               onChange={(e) => setStopwatchSubject(e.target.value)}
                               className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs font-medium text-slate-100 focus:outline-none focus:border-emerald-400"
                             >
-                              <option value="DSA & C/Python">💻 DSA & C/Python</option>
-                              <option value="Japanese (JLPT N5)">🇯🇵 Japanese (JLPT N5)</option>
-                              <option value="AI / ML">🤖 AI / ML Exploration</option>
-                              <option value="College / CSE">🎓 College / CSE Lectures</option>
+                              {categories.map(c => (
+                                <option key={c.id} value={c.name}>{c.name}</option>
+                              ))}
                             </select>
 
                             <button
@@ -1495,7 +1391,7 @@ XP should be between 30 and 60.`;
                           <p className="text-sm sm:text-base font-semibold text-white italic">
                             &ldquo;{activeQuote.quote}&rdquo;
                           </p>
-                          <p className="text-xs text-cyan-300 font-mono mt-0.5">{activeQuote.jpSub}</p>
+                          <p className="text-xs text-cyan-300 font-mono mt-0.5">{activeQuote.sub}</p>
                         </div>
                       </div>
                       <span className="text-xs font-mono text-slate-300 shrink-0 px-3 py-1 rounded-lg bg-white/5 border border-white/10">
@@ -1504,220 +1400,124 @@ XP should be between 30 and 60.`;
                     </div>
                   </section>
 
-                  <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
-                    <section className="xl:col-span-5 bg-slate-900/60 backdrop-blur-xl border border-slate-800/90 rounded-2xl p-6 flex flex-col justify-between shadow-xl">
-                      <div>
-                        <div className="flex items-center justify-between mb-4">
-                          <div className="flex items-center gap-2">
-                            <Sparkles className="w-5 h-5 text-rose-400" />
-                            <h3 className="font-bold text-base text-white">Daily Kanji Spotlight</h3>
-                          </div>
-                          <span className="text-xs font-mono px-2.5 py-0.5 rounded-full bg-rose-500/15 text-rose-300 border border-rose-500/30">
-                            {activeKanji.level} • {activeKanji.strokes} Strokes
-                          </span>
+                  {/* Day-Wise Study Hours Record Section */}
+                  <section className="bg-slate-900/60 backdrop-blur-xl border border-slate-800/90 rounded-2xl p-6 shadow-xl">
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+                      <div className="flex items-center gap-2">
+                        <BarChart3 className="w-5 h-5 text-emerald-400" />
+                        <div>
+                          <h3 className="font-bold text-base text-white">Day-Wise Study Hours Record</h3>
+                          <p className="text-xs text-slate-400">Persistent log of daily study sessions recorded via the timewatch</p>
                         </div>
+                      </div>
 
-                        <div className="flex flex-col sm:flex-row items-center gap-6 p-5 rounded-2xl bg-gradient-to-br from-slate-950 via-slate-900 to-rose-950/30 border border-slate-800/90">
-                          <div className="w-28 h-28 rounded-2xl bg-slate-950 border border-rose-500/30 flex items-center justify-center shrink-0 shadow-inner">
-                            <span className="text-6xl font-bold text-white select-all">
-                              {activeKanji.kanji}
+                      <div className="px-3.5 py-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-xs font-mono text-emerald-300">
+                        Total Logged:{' '}
+                        <strong>
+                          {formatHoursReadable(
+                            Object.values(studyHistory).reduce((acc, d) => acc + (d.totalSeconds || 0), 0)
+                          )}
+                        </strong>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-7 gap-2 mb-5 p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800/90">
+                      {Array.from({ length: 7 }).map((_, i) => {
+                        const d = new Date(now);
+                        d.setDate(now.getDate() - (6 - i));
+                        const dateKey = localDateKey(d);
+                        const daySecs = studyHistory[dateKey]?.totalSeconds || 0;
+                        const hoursFloat = +(daySecs / 3600).toFixed(1);
+                        const barPercent = Math.min(100, Math.round((daySecs / (4 * 3600)) * 100));
+                        const isToday = i === 6;
+
+                        return (
+                          <div key={dateKey} className="flex flex-col items-center">
+                            <span className="text-[10px] font-mono text-slate-400 mb-1">
+                              {hoursFloat > 0 ? `${hoursFloat}h` : '0h'}
+                            </span>
+                            <div className="w-full max-w-[32px] h-16 bg-slate-900 rounded-lg border border-slate-800 flex items-end p-0.5 overflow-hidden">
+                              <div
+                                className={`w-full rounded transition-all duration-500 ${
+                                  isToday
+                                    ? 'bg-gradient-to-t from-emerald-500 to-cyan-400'
+                                    : 'bg-indigo-500/60'
+                                }`}
+                                style={{ height: `${Math.max(barPercent, daySecs > 0 ? 14 : 0)}%` }}
+                              />
+                            </div>
+                            <span
+                              className={`text-[10px] font-mono mt-1.5 ${
+                                isToday ? 'text-emerald-300 font-bold' : 'text-slate-400'
+                              }`}
+                            >
+                              {isToday ? 'Today' : d.toLocaleDateString('en-US', { weekday: 'short' })}
                             </span>
                           </div>
+                        );
+                      })}
+                    </div>
 
-                          <div className="space-y-2 text-center sm:text-left flex-1">
-                            <div>
-                              <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400">
-                                Core Meaning
-                              </span>
-                              <h4 className="text-xl font-bold text-rose-300">{activeKanji.meaning}</h4>
-                            </div>
-
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-                              <div className="bg-slate-950/80 px-3 py-1.5 rounded-xl border border-slate-800">
-                                <span className="block text-[10px] text-slate-400 font-mono">On&apos;yomi (Chinese)</span>
-                                <span className="text-xs font-semibold text-slate-100">{activeKanji.onyomi}</span>
-                              </div>
-                              <div className="bg-slate-950/80 px-3 py-1.5 rounded-xl border border-slate-800">
-                                <span className="block text-[10px] text-slate-400 font-mono">Kun&apos;yomi (Japanese)</span>
-                                <span className="text-xs font-semibold text-slate-100">{activeKanji.kunyomi}</span>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="mt-4 p-3.5 rounded-xl bg-slate-950/70 border border-slate-800">
-                          <span className="block text-[10px] font-mono uppercase tracking-wider text-slate-400 mb-1">
-                            Compound Vocabulary Example
-                          </span>
-                          <p className="text-xs sm:text-sm font-medium text-slate-200">
-                            {activeKanji.example}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between">
-                        <span className="text-xs text-slate-400">
-                          Rotates automatically every midnight
-                        </span>
-                        <button
-                          onClick={() => {
-                            const exists = flashcards.some((f) => f.jp.includes(activeKanji.kanji));
-                            if (exists) {
-                              triggerToast('This Kanji is already in your JLPT deck!', 'check');
-                              return;
-                            }
-                            setFlashcards((prev) => [
-                              ...prev,
-                              {
-                                id: `f-kanji-${Date.now()}`,
-                                jp: activeKanji.kanji,
-                                romaji: `${activeKanji.onyomi} / ${activeKanji.kunyomi}`,
-                                en: activeKanji.meaning,
-                                type: 'Daily Kanji',
-                                mastered: false
-                              }
-                            ]);
-                            triggerToast(`Added ${activeKanji.kanji} (${activeKanji.meaning}) to JLPT Deck!`, 'sparkles');
-                          }}
-                          className="px-3.5 py-1.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-xs font-semibold transition flex items-center gap-1.5"
-                        >
-                          <Plus className="w-3.5 h-3.5" /> Add to JLPT Deck
-                        </button>
-                      </div>
-                    </section>
-
-                    <section className="xl:col-span-7 bg-slate-900/60 backdrop-blur-xl border border-slate-800/90 rounded-2xl p-6 flex flex-col justify-between shadow-xl">
-                      <div>
-                        <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
-                          <div className="flex items-center gap-2">
-                            <BarChart3 className="w-5 h-5 text-emerald-400" />
-                            <div>
-                              <h3 className="font-bold text-base text-white">Day-Wise Study Hours Record</h3>
-                              <p className="text-xs text-slate-400">
-                                Persistent log of all sessions recorded via the Study Timewatch
-                              </p>
-                            </div>
-                          </div>
-
-                          <div className="px-3.5 py-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-xs font-mono text-emerald-300">
-                            Total Logged:{' '}
-                            <strong>
-                              {formatHoursReadable(
-                                Object.values(studyHistory).reduce((acc, d) => acc + (d.totalSeconds || 0), 0)
-                              )}
-                            </strong>
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-7 gap-2 mb-5 p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800/90">
-                          {Array.from({ length: 7 }).map((_, i) => {
-                            const d = new Date(now);
-                            d.setDate(now.getDate() - (6 - i));
-                            const dateKey = d.toISOString().split('T')[0];
-                            const daySecs = studyHistory[dateKey]?.totalSeconds || 0;
-                            const hoursFloat = +(daySecs / 3600).toFixed(1);
-                            const barPercent = Math.min(100, Math.round((daySecs / (4 * 3600)) * 100));
-                            const isToday = i === 6;
-
-                            return (
-                              <div key={dateKey} className="flex flex-col items-center">
-                                <span className="text-[10px] font-mono text-slate-400 mb-1">
-                                  {hoursFloat > 0 ? `${hoursFloat}h` : '0h'}
-                                </span>
-                                <div className="w-full max-w-[32px] h-16 bg-slate-900 rounded-lg border border-slate-800 flex items-end p-0.5 overflow-hidden">
-                                  <div
-                                    className={`w-full rounded transition-all duration-500 ${
-                                      isToday
-                                        ? 'bg-gradient-to-t from-emerald-500 to-cyan-400'
-                                        : 'bg-indigo-500/60'
-                                    }`}
-                                    style={{ height: `${Math.max(barPercent, daySecs > 0 ? 14 : 0)}%` }}
-                                  />
-                                </div>
-                                <span
-                                  className={`text-[10px] font-mono mt-1.5 ${
-                                    isToday ? 'text-emerald-300 font-bold' : 'text-slate-400'
-                                  }`}
-                                >
-                                  {isToday ? 'Today' : d.toLocaleDateString('en-US', { weekday: 'short' })}
-                                </span>
-                              </div>
-                            );
-                          })}
-                        </div>
-
-                        <div className="space-y-3 max-h-60 overflow-y-auto pr-1">
-                          {Object.keys(studyHistory)
-                            .sort((a, b) => b.localeCompare(a))
-                            .map((dateKey) => {
-                              const dayRecord = studyHistory[dateKey];
-                              const isToday = dateKey === now.toISOString().split('T')[0];
-                              return (
-                                <div
-                                  key={dateKey}
-                                  className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800/90"
-                                >
-                                  <div className="flex items-center justify-between mb-2 pb-1.5 border-b border-slate-800/80">
-                                    <div className="flex items-center gap-2">
-                                      <span className="text-xs font-bold text-white font-mono">
-                                        {dateKey}
-                                      </span>
-                                      {isToday && (
-                                        <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono">
-                                          Today
-                                        </span>
-                                      )}
-                                    </div>
-                                    <span className="text-xs font-mono font-bold text-cyan-300">
-                                      {formatHoursReadable(dayRecord.totalSeconds)}
+                    <div className="space-y-3 max-h-60 overflow-y-auto pr-1">
+                      {Object.keys(studyHistory)
+                        .sort((a, b) => b.localeCompare(a))
+                        .map((dateKey) => {
+                          const dayRecord = studyHistory[dateKey];
+                          const isToday = dateKey === localDateKey(now);
+                          return (
+                            <div
+                              key={dateKey}
+                              className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800/90"
+                            >
+                              <div className="flex items-center justify-between mb-2 pb-1.5 border-b border-slate-800/80">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-bold text-white font-mono">{dateKey}</span>
+                                  {isToday && (
+                                    <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono">
+                                      Today
                                     </span>
-                                  </div>
-
-                                  <div className="space-y-1.5">
-                                    {dayRecord.sessions.map((sess) => (
-                                      <div
-                                        key={sess.id}
-                                        className="flex items-center justify-between text-xs bg-slate-900/80 px-2.5 py-1.5 rounded-lg"
-                                      >
-                                        <div className="flex items-center gap-2">
-                                          <span
-                                            className={`text-[10px] px-2 py-0.5 rounded border ${
-                                              CATEGORY_STYLES[sess.subject] || CATEGORY_STYLES['College / CSE']
-                                            }`}
-                                          >
-                                            {sess.subject}
-                                          </span>
-                                          <span className="text-[11px] text-slate-400 font-mono">
-                                            at {sess.timestamp}
-                                          </span>
-                                        </div>
-                                        <div className="flex items-center gap-2">
-                                          <span className="font-mono text-emerald-300 font-semibold">
-                                            {formatHoursReadable(sess.durationSecs)}
-                                          </span>
-                                          <button
-                                            onClick={() =>
-                                              deleteStudyDayEntry(dateKey, sess.id, sess.durationSecs)
-                                            }
-                                            className="text-slate-500 hover:text-red-400 transition"
-                                            title="Remove entry"
-                                          >
-                                            <Trash2 className="w-3.5 h-3.5" />
-                                          </button>
-                                        </div>
-                                      </div>
-                                    ))}
-                                  </div>
+                                  )}
                                 </div>
-                              );
-                            })}
-                        </div>
-                      </div>
-                    </section>
-                  </div>
+                                <span className="text-xs font-mono font-bold text-cyan-300">
+                                  {formatHoursReadable(dayRecord.totalSeconds)}
+                                </span>
+                              </div>
+
+                              <div className="space-y-1.5">
+                                {dayRecord.sessions.map((sess) => (
+                                  <div
+                                    key={sess.id}
+                                    className="flex items-center justify-between text-xs bg-slate-900/80 px-2.5 py-1.5 rounded-lg"
+                                  >
+                                    <div className="flex items-center gap-2">
+                                      <span className={`text-[10px] px-2 py-0.5 rounded border ${categoryStylesMap[sess.subject] || 'bg-slate-800 text-slate-300 border-slate-700'}`}>
+                                        {sess.subject}
+                                      </span>
+                                      <span className="text-[11px] text-slate-400 font-mono">at {sess.timestamp}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-mono text-emerald-300 font-semibold">
+                                        {formatHoursReadable(sess.durationSecs)}
+                                      </span>
+                                      <button
+                                        onClick={() => deleteStudyDayEntry(dateKey, sess.id, sess.durationSecs)}
+                                        className="text-slate-500 hover:text-red-400 transition"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  </section>
                 </div>
               )}
 
+              {/* POMODORO & KANBAN GRID */}
               {(activeNav === 'dashboard' || activeNav === 'focus' || activeNav === 'kanban') && (
                 <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
                   {(activeNav === 'dashboard' || activeNav === 'focus') && (
@@ -1742,43 +1542,63 @@ XP should be between 30 and 60.`;
                           </div>
                         </div>
 
-                        <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5 mb-5">
-                          {TIMER_MODES.map((m) => (
+                        <div className="mb-4">
+                          <div className="flex items-center justify-between gap-3 mb-2">
+                            <p className="text-xs font-medium text-slate-400">YOUR TIMER TABS</p>
                             <button
-                              key={m.id}
-                              onClick={() => selectTimerMode(m)}
-                              className={`px-2 py-1.5 rounded-lg text-xs font-medium transition border text-center ${
-                                selectedMode.id === m.id
-                                  ? 'bg-indigo-500/20 text-white border-indigo-500/50 shadow-sm'
-                                  : 'bg-slate-950/60 text-slate-400 border-slate-800 hover:text-slate-200'
-                              }`}
+                              type="button"
+                              onClick={() => setShowAddTimerTab((open) => !open)}
+                              className="px-3 py-2 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-500/40 text-indigo-200 text-xs font-semibold flex items-center gap-1.5 transition"
                             >
-                              <div className="truncate">{m.label}</div>
-                              <div className="text-[10px] font-mono opacity-75">{m.badge}</div>
+                              <Plus className="w-3.5 h-3.5" /> Add tab
                             </button>
-                          ))}
+                          </div>
+                          {showAddTimerTab && (
+                            <form onSubmit={handleAddTimerTab} className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_110px_auto_auto] gap-2 mb-3 p-3 rounded-xl border border-indigo-500/30 bg-indigo-500/5">
+                              <input
+                                autoFocus
+                                type="text"
+                                value={newTimerTabName}
+                                onChange={(e) => setNewTimerTabName(e.target.value)}
+                                placeholder="Tab name (e.g. Deep Coding)"
+                                aria-label="New timer tab name"
+                                maxLength={32}
+                                required
+                                className="min-w-0 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400"
+                              />
+                              <label className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-300">
+                                <span>Minutes</span>
+                                <input type="number" min="1" max="180" required value={newTimerTabMinutes} onChange={(e) => setNewTimerTabMinutes(e.target.value)} aria-label="Timer duration in minutes" className="w-12 bg-transparent text-white outline-none" />
+                              </label>
+                              <button type="submit" className="px-3 py-2 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-bold transition">Create tab</button>
+                              <button type="button" onClick={() => { setShowAddTimerTab(false); setNewTimerTabName(''); }} className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs transition">Cancel</button>
+                            </form>
+                          )}
+                          <div className="flex flex-wrap gap-2 mb-5">
+                            {allTimerModes.map((m) => (
+                              <button
+                                key={m.id}
+                                onClick={() => selectTimerMode(m)}
+                                className={`min-w-[100px] px-3 py-2 rounded-xl text-xs font-medium transition border text-center ${
+                                  selectedMode.id === m.id
+                                    ? 'bg-indigo-500/20 text-white border-indigo-500/50 shadow-sm'
+                                    : 'bg-slate-950/60 text-slate-400 border-slate-800 hover:text-slate-200'
+                                }`}
+                              >
+                                <div className="truncate">{m.label}</div>
+                                <div className="text-[10px] font-mono opacity-75">{m.badge || `${m.minutes}m`}</div>
+                              </button>
+                            ))}
+                          </div>
                         </div>
 
                         <div className="flex flex-col sm:flex-row items-center justify-around gap-6 my-4">
                           <div className="relative w-44 h-44 flex items-center justify-center shrink-0">
                             <svg className="w-full h-full -rotate-90" viewBox="0 0 160 160">
+                              <circle cx="80" cy="80" r="70" fill="none" stroke="#1e293b" strokeWidth="8" />
                               <circle
-                                cx="80"
-                                cy="80"
-                                r="70"
-                                fill="none"
-                                stroke="#1e293b"
-                                strokeWidth="8"
-                              />
-                              <circle
-                                cx="80"
-                                cy="80"
-                                r="70"
-                                fill="none"
-                                stroke="url(#timerGrad)"
-                                strokeWidth="8"
-                                strokeLinecap="round"
-                                strokeDasharray={2 * Math.PI * 70}
+                                cx="80" cy="80" r="70" fill="none" stroke="url(#timerGrad)" strokeWidth="8"
+                                strokeLinecap="round" strokeDasharray={2 * Math.PI * 70}
                                 strokeDashoffset={2 * Math.PI * 70 * (1 - timerProgress / 100)}
                                 className="transition-all duration-500"
                               />
@@ -1818,7 +1638,6 @@ XP should be between 30 and 60.`;
                                   setTimeLeft(totalTime);
                                 }}
                                 className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition"
-                                title="Reset Timer"
                               >
                                 <RotateCcw className="w-4 h-4" />
                               </button>
@@ -1827,33 +1646,12 @@ XP should be between 30 and 60.`;
                             <div className="flex items-center justify-between gap-2 bg-slate-950/70 px-3 py-2 rounded-xl border border-slate-800">
                               <span className="text-xs text-slate-400">Custom (min):</span>
                               <input
-                                type="number"
-                                min="1"
-                                max="180"
-                                value={customMinutes}
+                                type="number" min="1" max="180" value={customMinutes}
                                 onChange={(e) => applyCustomMinutes(e.target.value)}
                                 className="w-16 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-xs font-mono text-center text-white focus:outline-none focus:border-cyan-400"
                               />
                             </div>
 
-                            <div className="bg-slate-950/70 px-3 py-2 rounded-xl border border-slate-800">
-                              <label className="block text-[10px] uppercase tracking-wider text-slate-400 mb-1">
-                                Focusing On Task:
-                              </label>
-                              <select
-                                value={linkedTaskId}
-                                onChange={(e) => setLinkedTaskId(e.target.value)}
-                                className="w-full bg-transparent text-xs text-slate-200 focus:outline-none truncate"
-                              >
-                                {tasks
-                                  .filter((t) => t.status !== 'completed')
-                                  .map((t) => (
-                                    <option key={t.id} value={t.id} className="bg-slate-900 text-slate-200">
-                                      {t.title}
-                                    </option>
-                                  ))}
-                              </select>
-                            </div>
                           </div>
                         </div>
                       </div>
@@ -1871,11 +1669,7 @@ XP should be between 30 and 60.`;
                               <Volume2 className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
                             )}
                             <input
-                              type="range"
-                              min="0.02"
-                              max="0.6"
-                              step="0.02"
-                              value={volume}
+                              type="range" min="0.02" max="0.6" step="0.02" value={volume}
                               onChange={(e) => setVolume(parseFloat(e.target.value))}
                               className="w-20 accent-cyan-400 cursor-pointer h-1 bg-slate-800 rounded-lg"
                             />
@@ -1914,7 +1708,7 @@ XP should be between 30 and 60.`;
                       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                         <div className="flex items-center gap-2">
                           <Layers className="w-5 h-5 text-indigo-400" />
-                          <h3 className="font-bold text-base text-white">CSE & Study Sprint Board</h3>
+                          <h3 className="font-bold text-base text-white">Sprint Kanban Board</h3>
                         </div>
 
                         <div className="flex flex-wrap items-center gap-2">
@@ -1924,10 +1718,9 @@ XP should be between 30 and 60.`;
                             className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-indigo-500"
                           >
                             <option value="All">All Categories</option>
-                            <option value="DSA & C/Python">DSA & C/Python</option>
-                            <option value="AI / ML">AI / ML</option>
-                            <option value="Japanese (JLPT N5)">Japanese (JLPT N5)</option>
-                            <option value="College / CSE">College / CSE</option>
+                            {categories.map(c => (
+                              <option key={c.id} value={c.name}>{c.name}</option>
+                            ))}
                           </select>
 
                           <button
@@ -1936,49 +1729,8 @@ XP should be between 30 and 60.`;
                           >
                             <Plus className="w-3.5 h-3.5" /> New Task
                           </button>
-
-                          <button
-                            onClick={() => setShowAiSprintModal(!showAiSprintModal)}
-                            className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-fuchsia-600 to-indigo-600 hover:from-fuchsia-500 hover:to-indigo-500 text-white text-xs font-semibold flex items-center gap-1.5 transition shadow-lg shadow-fuchsia-600/20"
-                          >
-                            <Wand2 className="w-3.5 h-3.5" /> AI Sprint Breakdown
-                          </button>
                         </div>
                       </div>
-
-                      {showAiSprintModal && (
-                        <form
-                          onSubmit={handleAiGenerateSprint}
-                          className="mb-4 p-3.5 rounded-xl bg-gradient-to-r from-indigo-950/90 via-slate-950 to-fuchsia-950/80 border border-fuchsia-500/40 flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5"
-                        >
-                          <div className="flex items-center gap-2 text-xs font-semibold text-fuchsia-300 shrink-0">
-                            <Sparkles className="w-4 h-4 text-fuchsia-400" />
-                            <span>Gemini Goal Breakdown:</span>
-                          </div>
-                          <input
-                            type="text"
-                            placeholder="e.g., Master C pointers & dynamic memory or Prepare for JLPT N5 particles..."
-                            value={aiSprintGoal}
-                            onChange={(e) => setAiSprintGoal(e.target.value)}
-                            className="flex-1 bg-slate-900/90 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-fuchsia-400"
-                          />
-                          <button
-                            type="submit"
-                            disabled={isGeneratingTasks}
-                            className="px-4 py-2 rounded-lg bg-fuchsia-500 hover:bg-fuchsia-400 disabled:opacity-50 text-slate-950 font-bold text-xs flex items-center justify-center gap-1.5 transition shrink-0"
-                          >
-                            {isGeneratingTasks ? (
-                              <>
-                                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Generating...
-                              </>
-                            ) : (
-                              <>
-                                <Wand2 className="w-3.5 h-3.5" /> Generate 3 Tasks
-                              </>
-                            )}
-                          </button>
-                        </form>
-                      )}
 
                       {showAddTask && (
                         <form
@@ -1987,7 +1739,7 @@ XP should be between 30 and 60.`;
                         >
                           <input
                             type="text"
-                            placeholder="e.g., Implement Linked List insertion in C..."
+                            placeholder="e.g., Implement Linked List..."
                             value={newTaskTitle}
                             onChange={(e) => setNewTaskTitle(e.target.value)}
                             className="sm:col-span-6 bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
@@ -1997,10 +1749,9 @@ XP should be between 30 and 60.`;
                             onChange={(e) => setNewTaskCategory(e.target.value)}
                             className="sm:col-span-3 bg-slate-900 border border-slate-800 rounded-lg px-2 py-2 text-xs text-slate-200"
                           >
-                            <option value="DSA & C/Python">DSA & C/Python</option>
-                            <option value="AI / ML">AI / ML</option>
-                            <option value="Japanese (JLPT N5)">Japanese (JLPT N5)</option>
-                            <option value="College / CSE">College / CSE</option>
+                            {categories.map(c => (
+                              <option key={c.id} value={c.name}>{c.name}</option>
+                            ))}
                           </select>
                           <select
                             value={newTaskPriority}
@@ -2048,7 +1799,7 @@ XP should be between 30 and 60.`;
                                 <div className="space-y-2.5 max-h-[320px] overflow-y-auto pr-1">
                                   {colTasks.length === 0 ? (
                                     <p className="text-xs text-slate-600 text-center py-8 italic">
-                                      No tasks in {col.title}
+                                      No tasks
                                     </p>
                                   ) : (
                                     colTasks.map((task) => (
@@ -2057,29 +1808,15 @@ XP should be between 30 and 60.`;
                                         className="p-3 rounded-xl bg-slate-900/90 border border-slate-800/90 hover:border-slate-700 transition group"
                                       >
                                         <div className="flex items-center justify-between gap-1 mb-1.5">
-                                          <span
-                                            className={`text-[10px] font-medium px-2 py-0.5 rounded-md border ${
-                                              CATEGORY_STYLES[task.category] || CATEGORY_STYLES['College / CSE']
-                                            }`}
-                                          >
+                                          <span className={`text-[10px] font-medium px-2 py-0.5 rounded-md border ${categoryStylesMap[task.category] || 'bg-slate-800 text-slate-300 border-slate-700'}`}>
                                             {task.category}
                                           </span>
-                                          <span
-                                            className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${
-                                              PRIORITY_STYLES[task.priority]
-                                            }`}
-                                          >
+                                          <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${PRIORITY_STYLES[task.priority]}`}>
                                             {task.priority}
                                           </span>
                                         </div>
 
-                                        <p
-                                          className={`text-xs font-medium leading-relaxed mb-3 ${
-                                            task.status === 'completed'
-                                              ? 'line-through text-slate-500'
-                                              : 'text-slate-200'
-                                          }`}
-                                        >
+                                        <p className={`text-xs font-medium leading-relaxed mb-3 ${task.status === 'completed' ? 'line-through text-slate-500' : 'text-slate-200'}`}>
                                           {task.title}
                                         </p>
 
@@ -2090,28 +1827,16 @@ XP should be between 30 and 60.`;
                                           <div className="flex items-center gap-1">
                                             {task.status !== 'todo' && (
                                               <button
-                                                onClick={() =>
-                                                  moveTask(
-                                                    task.id,
-                                                    task.status === 'completed' ? 'in_progress' : 'todo'
-                                                  )
-                                                }
+                                                onClick={() => moveTask(task.id, task.status === 'completed' ? 'in_progress' : 'todo')}
                                                 className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300"
-                                                title="Move Left"
                                               >
                                                 <ArrowLeft className="w-3 h-3" />
                                               </button>
                                             )}
                                             {task.status !== 'completed' && (
                                               <button
-                                                onClick={() =>
-                                                  moveTask(
-                                                    task.id,
-                                                    task.status === 'todo' ? 'in_progress' : 'completed'
-                                                  )
-                                                }
+                                                onClick={() => moveTask(task.id, task.status === 'todo' ? 'in_progress' : 'completed')}
                                                 className="p-1 rounded bg-indigo-500/20 hover:bg-indigo-500/40 text-indigo-300"
-                                                title="Advance Task"
                                               >
                                                 <ArrowRight className="w-3 h-3" />
                                               </button>
@@ -2119,7 +1844,6 @@ XP should be between 30 and 60.`;
                                             <button
                                               onClick={() => deleteTask(task.id)}
                                               className="p-1 rounded hover:bg-red-500/20 text-slate-500 hover:text-red-400 transition"
-                                              title="Delete"
                                             >
                                               <Trash2 className="w-3 h-3" />
                                             </button>
@@ -2139,309 +1863,24 @@ XP should be between 30 and 60.`;
                 </div>
               )}
 
+              {/* HABITS + SCRATCHPAD */}
               <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
-                {(activeNav === 'dashboard' || activeNav === 'study') && (
-                  <section
-                    className={`${
-                      activeNav === 'study' ? 'xl:col-span-12 max-w-4xl mx-auto w-full' : 'xl:col-span-5'
-                    } bg-slate-900/50 backdrop-blur-xl border border-slate-800/90 rounded-2xl p-5 flex flex-col justify-between shadow-xl`}
-                  >
-                    <div>
-                      <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
-                        <div className="flex items-center gap-2">
-                          <BookOpen className="w-5 h-5 text-rose-400" />
-                          <h3 className="font-bold text-base text-white">Study Deck & Cheat Sheet</h3>
-                        </div>
-
-                        <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800">
-                          <button
-                            onClick={() => setStudyTab('jlpt')}
-                            className={`px-3 py-1 rounded-lg text-xs font-medium transition ${
-                              studyTab === 'jlpt'
-                                ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
-                                : 'text-slate-400 hover:text-slate-200'
-                            }`}
-                          >
-                            🇯🇵 JLPT N5 Deck
-                          </button>
-                          <button
-                            onClick={() => setStudyTab('cs')}
-                            className={`px-3 py-1 rounded-lg text-xs font-medium transition ${
-                              studyTab === 'cs'
-                                ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
-                                : 'text-slate-400 hover:text-slate-200'
-                            }`}
-                          >
-                            ⚡ Big-O & CS
-                          </button>
-                        </div>
-                      </div>
-
-                      {studyTab === 'jlpt' && currentCard && (
-                        <div>
-                          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400 mb-2">
-                            <span>
-                              Card <strong className="text-white font-mono">{currentCardIdx + 1}</strong> of{' '}
-                              {flashcards.length} ({flashcards.filter((f) => f.mastered).length} Mastered)
-                            </span>
-                            <div className="flex items-center gap-3">
-                              <button
-                                onClick={() => setShowAiDeckModal(!showAiDeckModal)}
-                                className="text-fuchsia-400 hover:text-fuchsia-300 font-semibold flex items-center gap-1"
-                              >
-                                <Wand2 className="w-3.5 h-3.5" /> ✨ AI Generate Cards
-                              </button>
-                              <button
-                                onClick={() => setShowAddCard(!showAddCard)}
-                                className="text-rose-400 hover:text-rose-300 font-medium flex items-center gap-1"
-                              >
-                                <Plus className="w-3.5 h-3.5" /> Add Word
-                              </button>
-                            </div>
-                          </div>
-
-                          {showAiDeckModal && (
-                            <form
-                              onSubmit={handleAiGenerateCards}
-                              className="mb-3 p-3 rounded-xl bg-slate-950 border border-fuchsia-500/40 flex flex-col sm:flex-row gap-2"
-                            >
-                              <input
-                                type="text"
-                                placeholder="Topic (e.g., Daily Verbs, Campus Life, Food, Time, Particles)..."
-                                value={aiDeckTopic}
-                                onChange={(e) => setAiDeckTopic(e.target.value)}
-                                className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-fuchsia-400"
-                              />
-                              <button
-                                type="submit"
-                                disabled={isGeneratingCards}
-                                className="px-3 py-1.5 bg-fuchsia-500 hover:bg-fuchsia-400 disabled:opacity-50 text-slate-950 font-bold rounded-lg text-xs flex items-center justify-center gap-1.5 shrink-0"
-                              >
-                                {isGeneratingCards ? (
-                                  <>
-                                    <Loader2 className="w-3.5 h-3.5 animate-spin" /> Creating...
-                                  </>
-                                ) : (
-                                  <>
-                                    <Sparkles className="w-3.5 h-3.5" /> Create 4 N5 Cards
-                                  </>
-                                )}
-                              </button>
-                            </form>
-                          )}
-
-                          {showAddCard && (
-                            <form
-                              onSubmit={handleAddCard}
-                              className="mb-3 p-3 rounded-xl bg-slate-950 border border-rose-500/30 grid grid-cols-1 sm:grid-cols-3 gap-2"
-                            >
-                              <input
-                                type="text"
-                                placeholder="Japanese (e.g. みず)"
-                                value={newCardJp}
-                                onChange={(e) => setNewCardJp(e.target.value)}
-                                className="bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white"
-                              />
-                              <input
-                                type="text"
-                                placeholder="Romaji (e.g. Mizu)"
-                                value={newCardRomaji}
-                                onChange={(e) => setNewCardRomaji(e.target.value)}
-                                className="bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white"
-                              />
-                              <div className="flex gap-1.5">
-                                <input
-                                  type="text"
-                                  placeholder="English (Water)"
-                                  value={newCardEn}
-                                  onChange={(e) => setNewCardEn(e.target.value)}
-                                  className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white"
-                                />
-                                <button
-                                  type="submit"
-                                  className="px-3 bg-rose-500 hover:bg-rose-400 text-white font-bold rounded-lg text-xs"
-                                >
-                                  Save
-                                </button>
-                              </div>
-                            </form>
-                          )}
-
-                          <div
-                            onClick={() => setIsFlipped(!isFlipped)}
-                            className="cursor-pointer select-none h-48 rounded-2xl bg-gradient-to-br from-slate-950 via-slate-900 to-rose-950/30 border border-slate-800 hover:border-rose-500/40 p-6 flex flex-col items-center justify-center text-center relative transition-all shadow-inner group"
-                          >
-                            <div className="absolute top-3 left-3 flex items-center gap-2">
-                              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-rose-500/15 text-rose-300 border border-rose-500/30">
-                                {currentCard.type}
-                              </span>
-                              {currentCard.mastered && (
-                                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-                                  ✓ Mastered
-                                </span>
-                              )}
-                            </div>
-                            <span className="absolute top-3 right-3 text-[10px] text-slate-500 group-hover:text-slate-300">
-                              Click to flip
-                            </span>
-
-                            {!isFlipped ? (
-                              <div>
-                                <p className="text-3xl sm:text-4xl font-bold text-white tracking-wide mb-2">
-                                  {currentCard.jp}
-                                </p>
-                                <p className="text-xs text-slate-400 font-mono">
-                                  Tap to reveal Romaji & Meaning
-                                </p>
-                              </div>
-                            ) : (
-                              <div className="space-y-1.5">
-                                <p className="text-lg font-mono text-rose-300 font-semibold">
-                                  {currentCard.romaji}
-                                </p>
-                                <p className="text-2xl font-bold text-white">{currentCard.en}</p>
-                                <p className="text-xs text-slate-400">{currentCard.jp}</p>
-                              </div>
-                            )}
-                          </div>
-
-                          <div className="flex items-center justify-between gap-2 mt-3">
-                            <button
-                              onClick={() => {
-                                setIsFlipped(false);
-                                setCardAiExplanation(null);
-                                setCurrentCardIdx((prev) =>
-                                  prev === 0 ? flashcards.length - 1 : prev - 1
-                                );
-                              }}
-                              className="p-2 rounded-xl bg-slate-950 hover:bg-slate-800 text-slate-300 border border-slate-800"
-                            >
-                              <ChevronLeft className="w-4 h-4" />
-                            </button>
-
-                            <button
-                              onClick={() => toggleCardMastered(currentCard.id)}
-                              className={`flex-1 py-2 px-3 rounded-xl text-xs font-semibold border transition flex items-center justify-center gap-1.5 ${
-                                currentCard.mastered
-                                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                                  : 'bg-slate-950 hover:bg-slate-800 text-slate-300 border-slate-800'
-                              }`}
-                            >
-                              <CheckCircle2 className="w-4 h-4" />
-                              {currentCard.mastered ? 'Mastered' : 'Mark Mastered'}
-                            </button>
-
-                            <button
-                              onClick={handleExplainCurrentCard}
-                              disabled={isExplainingCard}
-                              className="py-2 px-3 rounded-xl text-xs font-semibold bg-fuchsia-500/15 hover:bg-fuchsia-500/25 text-fuchsia-300 border border-fuchsia-500/30 transition flex items-center gap-1.5"
-                              title="Get AI Example Sentence & Mnemonic"
-                            >
-                              {isExplainingCard ? (
-                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              ) : (
-                                <Sparkles className="w-3.5 h-3.5" />
-                              )}
-                              <span>AI Sensei</span>
-                            </button>
-
-                            <button
-                              onClick={() => {
-                                setIsFlipped(false);
-                                setCardAiExplanation(null);
-                                setCurrentCardIdx((prev) => (prev + 1) % flashcards.length);
-                              }}
-                              className="p-2 rounded-xl bg-slate-950 hover:bg-slate-800 text-slate-300 border border-slate-800"
-                            >
-                              <ChevronRight className="w-4 h-4" />
-                            </button>
-                          </div>
-
-                          {cardAiExplanation && (
-                            <div className="mt-3 p-3 rounded-xl bg-slate-950/90 border border-fuchsia-500/30 text-xs text-slate-200 space-y-1">
-                              <div className="flex items-center justify-between text-fuchsia-300 font-semibold mb-1">
-                                <span className="flex items-center gap-1.5">
-                                  <Bot className="w-3.5 h-3.5" /> Gemini Sensei Note
-                                </span>
-                                <button
-                                  onClick={() => setCardAiExplanation(null)}
-                                  className="text-[10px] text-slate-400 hover:text-white"
-                                >
-                                  Dismiss
-                                </button>
-                              </div>
-                              <p className="whitespace-pre-line leading-relaxed text-slate-300">
-                                {cardAiExplanation}
-                              </p>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {studyTab === 'cs' && (
-                        <div>
-                          <input
-                            type="text"
-                            placeholder="Filter data structure or algorithm..."
-                            value={csSearch}
-                            onChange={(e) => setCsSearch(e.target.value)}
-                            className="w-full mb-3 bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-cyan-500"
-                          />
-                          <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
-                            {COMPLEXITY_DATA.filter(
-                              (item) =>
-                                item.name.toLowerCase().includes(csSearch.toLowerCase()) ||
-                                item.note.toLowerCase().includes(csSearch.toLowerCase())
-                            ).map((item) => (
-                              <div
-                                key={item.name}
-                                className="p-2.5 rounded-xl bg-slate-950/80 border border-slate-800/90 text-xs"
-                              >
-                                <div className="flex flex-wrap items-center justify-between gap-1 mb-1">
-                                  <span className="font-bold text-cyan-300">{item.name}</span>
-                                  <div className="flex items-center gap-1.5 font-mono text-[10px]">
-                                    <span className="px-1.5 py-0.5 rounded bg-slate-900 text-slate-300">
-                                      Search: {item.search}
-                                    </span>
-                                    <span className="px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300">
-                                      Ins/Run: {item.insert}
-                                    </span>
-                                    <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300">
-                                      Space: {item.space}
-                                    </span>
-                                  </div>
-                                </div>
-                                <p className="text-[11px] text-slate-400">{item.note}</p>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </section>
-                )}
-
                 {activeNav === 'dashboard' && (
-                  <section className="xl:col-span-3 bg-slate-900/50 backdrop-blur-xl border border-slate-800/90 rounded-2xl p-5 flex flex-col justify-between shadow-xl">
+                  <section className="xl:col-span-5 bg-slate-900/50 backdrop-blur-xl border border-slate-800/90 rounded-2xl p-5 flex flex-col justify-between shadow-xl">
                     <div>
                       <div className="flex items-center justify-between mb-4">
                         <div className="flex items-center gap-2">
                           <Flame className="w-5 h-5 text-amber-400" />
                           <h3 className="font-bold text-base text-white">Daily Habit Matrix</h3>
                         </div>
-                        <span className="text-xs font-mono text-amber-300">+20 XP / check</span>
+                        <span className="text-xs font-mono text-amber-300">+20 XP</span>
                       </div>
 
                       <div className="space-y-3.5">
                         {habits.map((habit) => (
-                          <div
-                            key={habit.id}
-                            className="p-3 rounded-xl bg-slate-950/70 border border-slate-800/80"
-                          >
+                          <div key={habit.id} className="p-3 rounded-xl bg-slate-950/70 border border-slate-800/80">
                             <div className="flex items-center justify-between mb-2">
-                              <span className="text-xs font-medium text-slate-200 truncate pr-2">
-                                {habit.name}
-                              </span>
+                              <span className="text-xs font-medium text-slate-200 truncate pr-2">{habit.name}</span>
                               <span className="text-[11px] font-mono text-amber-400 shrink-0 flex items-center gap-0.5">
                                 <Flame className="w-3 h-3" /> {habit.streak}d
                               </span>
@@ -2475,225 +1914,119 @@ XP should be between 30 and 60.`;
                 {(activeNav === 'dashboard' || activeNav === 'scratchpad') && (
                   <section
                     className={`${
-                      activeNav === 'scratchpad' ? 'xl:col-span-12 max-w-5xl mx-auto w-full' : 'xl:col-span-4'
+                      activeNav === 'scratchpad' ? 'xl:col-span-12 max-w-5xl mx-auto w-full' : 'xl:col-span-7'
                     } bg-slate-900/50 backdrop-blur-xl border border-slate-800/90 rounded-2xl p-5 flex flex-col justify-between shadow-xl`}
                   >
                     <div className="flex flex-col h-full">
                       <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                         <div className="flex items-center gap-2">
                           <Code2 className="w-5 h-5 text-emerald-400" />
-                          <h3 className="font-bold text-base text-white">Dev & Study Scratchpad</h3>
+                          <h3 className="font-bold text-base text-white">Dev Scratchpad</h3>
                         </div>
 
                         <div className="flex items-center gap-1.5">
                           <button
-                            onClick={() => handleAiScratchpadAssist('optimize')}
-                            disabled={isAiProcessingNote}
-                            title="Add AI Complexity & Code Comments"
-                            className="px-2.5 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-500/30 text-xs flex items-center gap-1 transition disabled:opacity-50"
-                          >
-                            {isAiProcessingNote ? (
-                              <Loader2 className="w-3 h-3 animate-spin" />
-                            ) : (
-                              <Wand2 className="w-3 h-3" />
-                            )}
-                            <span>AI Polish</span>
-                          </button>
-                          <button
-                            onClick={() => handleAiScratchpadAssist('quiz')}
-                            disabled={isAiProcessingNote}
-                            title="Generate 2 Practice Questions from Notes"
-                            className="px-2.5 py-1 rounded-lg bg-fuchsia-500/20 hover:bg-fuchsia-500/30 text-fuchsia-300 border border-fuchsia-500/30 text-xs flex items-center gap-1 transition disabled:opacity-50"
-                          >
-                            <Sparkles className="w-3 h-3" />
-                            <span>Quiz Me</span>
-                          </button>
-                          <button
                             onClick={copyScratchpad}
                             className="px-2.5 py-1 rounded-lg bg-slate-950 hover:bg-slate-800 text-slate-300 border border-slate-800 text-xs flex items-center gap-1.5 transition"
                           >
-                            {copiedNote ? (
-                              <>
-                                <Check className="w-3.5 h-3.5 text-emerald-400" /> Copied
-                              </>
-                            ) : (
-                              <>
-                                <Copy className="w-3.5 h-3.5 text-cyan-400" /> Copy
-                              </>
-                            )}
+                            {copiedNote ? <><Check className="w-3.5 h-3.5 text-emerald-400" /> Copied</> : <><Copy className="w-3.5 h-3.5 text-cyan-400" /> Copy</>}
                           </button>
                         </div>
                       </div>
 
-                      <div className="flex gap-1.5 mb-3">
-                        {[
-                          { id: 'snippets', label: 'Python / C Code' },
-                          { id: 'japanese', label: 'JLPT Notes' },
-                          { id: 'ideas', label: 'Project Ideas' }
-                        ].map((tab) => (
-                          <button
+                      <div className="flex flex-wrap items-center gap-1.5 mb-3">
+                        {noteTabs.map((tab) => (
+                          <div
                             key={tab.id}
                             onClick={() => setActiveNoteTab(tab.id)}
-                            className={`px-3 py-1.5 rounded-xl text-xs font-medium border transition ${
+                            className={`group cursor-pointer pl-3 pr-2 py-1.5 rounded-xl text-xs font-medium border transition flex items-center gap-1.5 ${
                               activeNoteTab === tab.id
                                 ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
                                 : 'bg-slate-950/60 text-slate-400 border-slate-800 hover:text-slate-200'
                             }`}
                           >
-                            {tab.label}
-                          </button>
+                            <span>{tab.label}</span>
+                            {noteTabs.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={(e) => handleDeleteNoteTab(e, tab.id, tab.label)}
+                                title={`Remove ${tab.label}`}
+                                className={`p-0.5 rounded-md transition ${
+                                  activeNoteTab === tab.id
+                                    ? 'text-emerald-300/70 hover:text-red-300 hover:bg-red-500/20'
+                                    : 'text-slate-500 opacity-60 group-hover:opacity-100 hover:text-red-400 hover:bg-red-500/15'
+                                }`}
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
                         ))}
+
+                        {!showAddNoteTab ? (
+                          <button
+                            type="button"
+                            onClick={() => setShowAddNoteTab(true)}
+                            className="px-2.5 py-1.5 rounded-xl text-xs font-medium border border-dashed border-slate-700 hover:border-emerald-500/50 text-slate-400 hover:text-emerald-300 bg-slate-950/40 transition flex items-center gap-1"
+                            title="Add new section/topic"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            <span>Add Topic</span>
+                          </button>
+                        ) : (
+                          <form onSubmit={handleAddNoteTab} className="flex items-center gap-1">
+                            <input
+                              type="text"
+                              autoFocus
+                              placeholder="Topic name..."
+                              value={newNoteTabTitle}
+                              onChange={(e) => setNewNoteTabTitle(e.target.value)}
+                              className="bg-slate-950 border border-emerald-500/50 rounded-xl px-2.5 py-1 text-xs text-white focus:outline-none w-32"
+                            />
+                            <button
+                              type="submit"
+                              className="px-2.5 py-1 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs transition"
+                            >
+                              Add
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowAddNoteTab(false);
+                                setNewNoteTabTitle('');
+                              }}
+                              className="p-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 transition"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </form>
+                        )}
                       </div>
 
                       <textarea
                         value={notes[activeNoteTab] || ''}
-                        onChange={(e) =>
-                          setNotes({ ...notes, [activeNoteTab]: e.target.value })
-                        }
+                        onChange={(e) => setNotes({ ...notes, [activeNoteTab]: e.target.value })}
                         rows={activeNav === 'scratchpad' ? 16 : 9}
                         spellCheck={false}
+                        placeholder="Write code snippets, study notes, or ideas for this topic..."
                         className="w-full flex-1 bg-slate-950/90 border border-slate-800 rounded-xl p-3.5 text-xs font-mono text-slate-200 leading-relaxed focus:outline-none focus:border-emerald-500/50 resize-none"
-                        placeholder="Type code snippets, algorithms, or Japanese notes here..."
                       />
 
                       <div className="flex items-center justify-between text-[11px] font-mono text-slate-500 mt-2 pt-1">
-                        <span>Auto-saved to localStorage</span>
-                        <span>
-                          {(notes[activeNoteTab] || '').split('\n').length} lines •{' '}
-                          {(notes[activeNoteTab] || '').length} chars
-                        </span>
+                        <span title="Saved only in this browser profile; use Export for a backup">Auto-saved on this device · Export for backup</span>
+                        <span>{(notes[activeNoteTab] || '').split('\n').length} lines</span>
                       </div>
                     </div>
                   </section>
                 )}
               </div>
-
-              {(activeNav === 'dashboard' || activeNav === 'ai_tutor') && (
-                <section
-                  className={`${
-                    activeNav === 'ai_tutor' ? 'max-w-5xl mx-auto w-full' : ''
-                  } bg-slate-900/60 backdrop-blur-xl border border-indigo-500/30 rounded-2xl p-5 shadow-2xl`}
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-3 mb-4 pb-3 border-b border-slate-800/80">
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-fuchsia-500 flex items-center justify-center shadow-lg shadow-indigo-500/20">
-                        <Bot className="w-5 h-5 text-white" />
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <h3 className="font-bold text-base text-white">Gemini AI Study & Coding Copilot</h3>
-                          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                            {GEMINI_MODEL}
-                          </span>
-                        </div>
-                        <p className="text-xs text-slate-400">
-                          Interactive mentor for C/Python DSA, JLPT N5 Japanese, and AI/ML Hackathon ideas
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800">
-                      {[
-                        { id: 'dsa', label: '💻 DSA & C/Python' },
-                        { id: 'sensei', label: '🇯🇵 JLPT N5 Sensei' },
-                        { id: 'project', label: '🚀 AI & Hackathons' }
-                      ].map((p) => (
-                        <button
-                          key={p.id}
-                          onClick={() => setAiPersona(p.id)}
-                          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
-                            aiPersona === p.id
-                              ? 'bg-indigo-500/25 text-indigo-200 border border-indigo-500/40'
-                              : 'text-slate-400 hover:text-slate-200'
-                          }`}
-                        >
-                          {p.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap gap-2 mb-4">
-                    {[
-                      'Explain C pointers vs arrays with a memory diagram example',
-                      'Give me a 3-question mini quiz on JLPT N5 particles (wa, wo, ni)',
-                      'How do I optimize a Python O(n²) nested loop using a Hash Map?',
-                      'Suggest a Gemini API feature for my Smart Recycling project'
-                    ].map((chip) => (
-                      <button
-                        key={chip}
-                        onClick={() => handleSendAiChat(chip)}
-                        disabled={isAiChatLoading}
-                        className="text-xs px-3 py-1.5 rounded-xl bg-slate-950/90 hover:bg-slate-800 text-slate-300 border border-slate-800 hover:border-indigo-500/40 transition flex items-center gap-1.5 disabled:opacity-50"
-                      >
-                        <Sparkles className="w-3 h-3 text-cyan-400 shrink-0" />
-                        <span className="truncate max-w-xs sm:max-w-md">{chip}</span>
-                      </button>
-                    ))}
-                  </div>
-
-                  <div className="bg-slate-950/80 border border-slate-800/90 rounded-xl p-4 h-72 overflow-y-auto space-y-3 mb-3">
-                    {aiMessages.map((msg, idx) => (
-                      <div
-                        key={idx}
-                        className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                      >
-                        <div
-                          className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-xs leading-relaxed whitespace-pre-wrap ${
-                            msg.role === 'user'
-                              ? 'bg-indigo-600 text-white rounded-br-none'
-                              : 'bg-slate-900 border border-slate-800 text-slate-200 rounded-bl-none'
-                          }`}
-                        >
-                          {msg.text}
-                        </div>
-                      </div>
-                    ))}
-                    {isAiChatLoading && (
-                      <div className="flex justify-start">
-                        <div className="bg-slate-900 border border-slate-800 text-indigo-300 rounded-2xl rounded-bl-none px-4 py-2.5 text-xs flex items-center gap-2">
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          <span>Gemini is thinking...</span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  <form
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      handleSendAiChat();
-                    }}
-                    className="flex gap-2"
-                  >
-                    <input
-                      type="text"
-                      placeholder="Ask anything about C pointers, Python DSA, Big-O, or Japanese N5 grammar..."
-                      value={aiChatInput}
-                      onChange={(e) => setAiChatInput(e.target.value)}
-                      className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500"
-                    />
-                    <button
-                      type="submit"
-                      disabled={isAiChatLoading || !aiChatInput.trim()}
-                      className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-indigo-500 to-cyan-500 hover:from-indigo-400 hover:to-cyan-400 disabled:opacity-50 text-white font-semibold text-xs flex items-center gap-1.5 transition shadow-lg shadow-indigo-500/20"
-                    >
-                      <Send className="w-3.5 h-3.5" />
-                      <span>Ask Gemini</span>
-                    </button>
-                  </form>
-                </section>
-              )}
             </main>
           </div>
         </div>
       );
     }
 
-    // Mount the React Application
-    const root = createRoot(document.getElementById('root'));
-    root.render(<App />);
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
   </script>
 </body>
 </html>
-
